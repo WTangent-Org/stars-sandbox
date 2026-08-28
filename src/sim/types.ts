@@ -132,6 +132,47 @@ export interface UnitProfile {
 
 export type ToolMode = 'pan' | 'spawn'
 
+// ———— 存档 / 世界状态（本地存档、getstate/hostsave 协议共用） ————
+
+/** 单个天体的可序列化状态（轨迹不存：量大且会自然重建） */
+export interface WorldBodyState {
+  id: number
+  name: string
+  kind: BodyKind
+  x: number
+  y: number
+  vx: number
+  vy: number
+  mass: number
+  radius: number
+  visBoost?: number
+  color: string
+  glow: string
+  solid: boolean
+  spin?: number
+  absorbed?: number
+  lifeStage?: Body['lifeStage']
+}
+
+export interface WorldState {
+  version: 1
+  /** 保存时的预设 id（决定单位换算与默认相机） */
+  preset?: string
+  /** 保存时的相机（自动存档恢复视野用；导入的存档可以没有） */
+  camera?: { x: number; y: number; zoom: number }
+  config: {
+    G: number
+    timeScale: number
+    softening: number
+    trails: boolean
+    trailsForever: boolean
+    paused: boolean
+  }
+  simTime: number
+  merges: number
+  bodies: WorldBodyState[]
+}
+
 export interface SpawnSettings {
   kind: BodyKind
   mass: number

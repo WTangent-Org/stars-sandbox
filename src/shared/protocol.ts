@@ -1,5 +1,6 @@
 // 远程模拟通信协议：服务器 ↔ 浏览器共享
 // 帧用二进制（大场景省带宽），控制/元信息用 JSON
+import type { WorldState } from '../sim/types'
 
 /** 帧内天体种类编码（与 BodyKind 顺序一致） */
 export const KIND_CODE = ['star', 'planet', 'moon', 'asteroid', 'blackhole', 'ship'] as const
@@ -13,6 +14,10 @@ export interface ManifestBody {
   color: string
   glow: string
   solid: boolean
+  /** 视觉半径倍率（真实比例场景）：二进制帧不带，走元数据通道 */
+  visBoost?: number
+  /** 拥有者玩家 id（联机）；undefined/null = 无主 */
+  owner?: string | null
 }
 
 export interface ManifestMsg {
@@ -26,6 +31,8 @@ export interface MetaMsg {
   merges: number
   totalMass: number
   paused: boolean
+  /** 房间当前预设 id：客户端据此同步相机缩放/单位换算（新连进来的玩家也能对上画面） */
+  preset: string
   config: {
     G: number
     timeScale: number
@@ -47,7 +54,92 @@ export interface HelloMsg {
   tickMs: number
 }
 
-export type ServerMsg = ManifestMsg | MetaMsg | EffectMsg | HelloMsg
+// ———— 联机：房间 / 玩家 / 权限 / 投票 ————
+
+/** 星球权限：admin=可删可改权限可移动；move=可拖动抛掷；read=只读（默认） */
+export type BodyPerm = 'admin' | 'move' | 'read'
+
+export interface PlayerInfo {
+  id: string
+  name: string
+  color: string
+}
+
+/** 服务端 → 客户端：你进房了（含自己的身份与房间号） */
+export interface RoomMsg {
+  type: 'room'
+  /** 房间号；'lobby' = 公共大厅 */
+  room: string
+  you: PlayerInfo
+  players: PlayerInfo[]
+  /** 房主玩家 id；null = 公共大厅等无主房间（全局操作走投票） */
+  host: string | null
+}
+
+/** 服务端 → 客户端：玩家进出 */
+export interface PlayersMsg {
+  type: 'players'
+  players: PlayerInfo[]
+}
+
+/** 服务端 → 客户端：某颗天体的权限表（点选天体时下发） */
+export interface BodyPermsMsg {
+  type: 'bodyperms'
+  bodyId: number
+  /** 拥有者玩家 id；null = 无主（预设天体/创建者已离开） */
+  owner: string | null
+  /** 各玩家被授予的权限（不在表里的玩家 = read） */
+  grants: Record<string, BodyPerm>
+}
+
+/** 全局操作的投票状态 */
+export interface VoteMsg {
+  type: 'vote'
+  /** 投票 id（-1 = 无进行中的投票） */
+  id: number
+  action: 'pause' | 'rewind' | 'clear' | 'preset'
+  preset?: string
+  paused?: boolean
+  initiator: string
+  yes: number
+  no: number
+  total: number
+  /** 剩余秒数 */
+  ttl: number
+}
+
+export type ServerMsg =
+  | ManifestMsg
+  | MetaMsg
+  | EffectMsg
+  | HelloMsg
+  | RoomMsg
+  | PlayersMsg
+  | BodyPermsMsg
+  | VoteMsg
+  | WorldStateMsg
+  | HostedMsg
+  | RoomClosedMsg
+
+/** 服务端 → 客户端：世界状态应答（存档「保存当前」用，权威快照） */
+export interface WorldStateMsg {
+  type: 'worldstate'
+  state: WorldState
+}
+
+/** 服务端 → 客户端：hostsave 结果（开放到局域网完成，回房号） */
+export interface HostedMsg {
+  type: 'hosted'
+  /** 目标房间号；'' = 失败（房间满等） */
+  room: string
+}
+
+/** 服务端 → 客户端：房主解散了房间（MC 语义：房主走，房没） */
+export interface RoomClosedMsg {
+  type: 'roomClosed'
+  /** 'host_left' = 房主退出；'host_closed' = 房主主动关闭 */
+  reason: 'host_left' | 'host_closed'
+}
 
 /** 客户端 → 服务端：控制指令 */
 export type ClientCmd =
@@ -62,6 +154,23 @@ export type ClientCmd =
   | { type: 'clear' }
   | { type: 'rewind' }
   | { type: 'pause'; paused: boolean }
+  /** 进房：room 省略 = 公共大厅；给房号 = 加入/创建私房 */
+  | { type: 'join'; room?: string }
+  /** 授权/回收某颗天体的权限（owner 或该天体 admin 可用） */
+  | { type: 'perm'; bodyId: number; target: string; perm: BodyPerm | 'revoke' }
+  /** 点选天体时请求权限表 */
+  | { type: 'permquery'; bodyId: number }
+  /** 发起全局操作投票 */
+  | { type: 'votecall'; action: 'pause' | 'rewind' | 'clear' | 'preset'; preset?: string; paused?: boolean }
+  /** 对当前投票表态 */
+  | { type: 'votecast'; yes: boolean }
+  /** 请求当前房间宇宙的权威状态（存档「保存当前」用） */
+  | { type: 'getstate' }
+  /** 房主主动关闭房间（房解散，客人收到 roomClosed） */
+  | { type: 'closeRoom' }
+  /** 开放到局域网（MC 式）：把一份世界状态装进房间（省略 room = 新建随机房），
+   *  自己随即被移入该房。等价于「用存档开服」。 */
+  | { type: 'hostsave'; room?: string; state: WorldState }
 
 // ———— 二进制帧编解码 ————
 // 布局：msgType u8=1 | simTime f64 | merges u32 | count u32 | 每天体 34B:

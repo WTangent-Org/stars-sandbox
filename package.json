@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build && npm run build:server && node scripts/postbuild.mjs",
     "server": "tsx server/index.ts",
-    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --external:ws --outfile=dist-server/server.js",
-    "start": "node dist-server/server.js",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist-server/server.js",
+    "start": "node dist/boot.js",
     "start:kimi": "node dist/boot.js",
     "lint": "eslint .",
     "preview": "vite preview"

@@ -1,4 +1,4 @@
-import type { Body, BodyKind, Effect, SimConfig, TrailPoint, PerfConfig } from './types'
+import type { Body, BodyKind, Effect, SimConfig, TrailPoint, PerfConfig, WorldState } from './types'
 import { PERF_TIERS } from './types'
 
 /** 飞船推进器加速度（模拟单位/时间²），随油门缩放。
@@ -73,6 +73,9 @@ export class Simulation {
   effects: Effect[] = []
   simTime = 0
   merges = 0
+  /** 镜像模式（客户端补算）：只积分引力/推进/轨迹，碰撞、视界捕获、生命周期与
+   *  特效全部由服务器权威帧裁决，本地不判定（避免与权威状态分歧） */
+  mirror = false
   /** 时间回退：周期快照（浅拷贝天体数组 + 深拷贝各天体轨迹头尾信息） */
   private snapshots: Array<{ simTime: number; merges: number; bodies: Array<Partial<Body> & { trail: TrailPoint[] }> }> = []
   private snapTimer = 0
@@ -95,7 +98,8 @@ export class Simulation {
     stable: 0,
   }
 
-  /** 解析当前性能档位（auto 时根据 FPS 调节） */
+  /** 解析当前性能档位（auto 时根据 FPS 调节；自动档上限为「高」——
+   *  「极致」是手动专属档，避免普通设备被自动分配到过重负载） */
   resolvePerf(fps: number) {
     if (this.config.perfTier !== 'auto') {
       this.perf = PERF_TIERS[this.config.perfTier]
@@ -103,8 +107,8 @@ export class Simulation {
     }
     // 指数平滑 FPS
     this.perfAuto.fps = this.perfAuto.fps * 0.9 + fps * 0.1
-    const tiers: Array<'ultra' | 'high' | 'balanced' | 'low' | 'saver'> = ['saver', 'low', 'balanced', 'high', 'ultra']
-    const idx = tiers.indexOf(this.perfAuto.tier)
+    const tiers: Array<'high' | 'balanced' | 'low' | 'saver'> = ['saver', 'low', 'balanced', 'high']
+    const idx = tiers.indexOf(this.perfAuto.tier === 'ultra' ? 'high' : this.perfAuto.tier)
     const fpsNow = this.perfAuto.fps
     // 升档：FPS > 50 且稳定 60 帧
     if (fpsNow > 50 && idx < tiers.length - 1) {
@@ -267,19 +271,29 @@ export class Simulation {
     const { paused } = this.config
     if (!paused) {
       this.advance(frameDt, zoom)
-      // 每 1.5 秒真实时间存一帧快照，供时间回退；最多保留 160 帧
-      this.snapTimer += frameDt
-      if (this.snapTimer >= 1.5) {
-        this.snapTimer = 0
-        this.saveSnapshot()
+      // 每 1.5 秒真实时间存一帧快照，供时间回退；最多保留 160 帧（镜像不回退，免存）
+      if (!this.mirror) {
+        this.snapTimer += frameDt
+        if (this.snapTimer >= 1.5) {
+          this.snapTimer = 0
+          this.saveSnapshot()
+        }
       }
+    } else {
+      // 暂停时物理不走，但闪光等特效仍按真实时间衰减
+      this.ageEffects(frameDt)
     }
-    for (const e of this.effects) e.age += frameDt
+  }
+
+  private ageEffects(dt: number) {
+    for (const e of this.effects) e.age += dt
     this.effects = this.effects.filter((e) => e.age < e.ttl)
   }
 
   /** 纯物理步进（无快照/特效计时）——预演缓冲分叉出的影子模拟用它往前赶 */
   advance(frameDt: number, zoom = 1) {
+    // 特效老化放在 advance：离线主循环走 advance/预演缓冲，放 step 里会让特效永远不过期
+    this.ageEffects(frameDt)
     const { timeScale } = this.config
     const total = frameDt * timeScale
     // 碎片冷却按帧衰减（不是按子步）：子步数随时间倍率变化，按子步衰减会让冷却名存实亡
@@ -294,12 +308,13 @@ export class Simulation {
       this.computeAccelerations()
       this.integrate(dt, zoom)
       // 视界捕获必须在每个子步后检查：PW 势近视界发散，等到帧末再检查时
-      // 坠入者可能已被弹飞，永远错过捕获（数值虫洞）
-      this.captureHorizon()
+      // 坠入者可能已被弹飞，永远错过捕获（数值虫洞）。镜像模式不判定，等权威帧。
+      if (!this.mirror) this.captureHorizon()
+      this.collideCheck(true)
     }
     // 近黑洞护盾：PW 势近视界发散，任何天体贴到 1.5 r_s 内时按局部动力学时标
     // 追加细分子步，防止大步长直接跨过视界（跨过即捕获失败、被发散引力甩飞）
-    {
+    if (!this.mirror) {
       let shieldDt = Infinity
       for (const bh of this.bodies) {
         if (bh.kind !== 'blackhole') continue
@@ -320,11 +335,20 @@ export class Simulation {
           this.computeAccelerations()
           this.integrate(dt / extra, zoom)
           this.captureHorizon()
+          this.collideCheck(true)
         }
       }
     }
-    this.resolveCollisions()
+    this.collideCheck(false)
     this.simTime += total
+  }
+
+  /** 子步级碰撞检查：高速天体一帧能跨过好几个身位，帧末才检查会穿透或错过真实撞击点。
+   *  小场景（≤150 体）每个子步做一次；大场景 O(n²) 太贵，退回帧末一次。 */
+  private collideCheck(perSubstep: boolean) {
+    if (this.mirror) return
+    const small = this.bodies.length <= 150
+    if (perSubstep === small) this.resolveCollisions()
   }
 
   /** 深拷贝一个影子模拟（位置/速度/油门独立，预演分叉用）；不含快照与特效 */
@@ -397,6 +421,79 @@ export class Simulation {
 
   get snapshotCount(): number {
     return this.snapshots.length
+  }
+
+  /** 序列化整个世界（存档 / getstate 协议）。轨迹不存——量大且载入后会自然重建。 */
+  serialize(preset?: string): WorldState {
+    return {
+      version: 1,
+      preset,
+      config: {
+        G: this.config.G,
+        timeScale: this.config.timeScale,
+        softening: this.config.softening,
+        trails: this.config.trails,
+        trailsForever: this.config.trailsForever,
+        paused: this.config.paused,
+      },
+      simTime: this.simTime,
+      merges: this.merges,
+      bodies: this.bodies.map((b) => ({
+        id: b.id,
+        name: b.name,
+        kind: b.kind,
+        x: b.x,
+        y: b.y,
+        vx: b.vx,
+        vy: b.vy,
+        mass: b.mass,
+        radius: b.radius,
+        visBoost: b.visBoost,
+        color: b.color,
+        glow: b.glow,
+        solid: b.solid,
+        spin: b.spin,
+        absorbed: b.absorbed,
+        lifeStage: b.lifeStage,
+      })),
+    }
+  }
+
+  /** 从 WorldState 重建整个宇宙（载入存档 / hostsave）。保留原天体 id（联机权限按 id 对齐）。 */
+  restoreWorld(state: WorldState) {
+    this.reset()
+    Object.assign(this.config, state.config)
+    this.simTime = state.simTime
+    this.merges = state.merges
+    let maxId = 0
+    for (const s of state.bodies) {
+      const body: Body = {
+        id: s.id,
+        name: s.name,
+        kind: s.kind,
+        x: s.x,
+        y: s.y,
+        vx: s.vx,
+        vy: s.vy,
+        ax: 0,
+        ay: 0,
+        mass: s.mass,
+        radius: s.radius,
+        visBoost: s.visBoost,
+        color: s.color,
+        glow: s.glow,
+        solid: s.solid,
+        spin: s.spin,
+        absorbed: s.absorbed,
+        lifeStage: s.lifeStage,
+        trail: [],
+        alive: true,
+      }
+      this.bodies.push(body)
+      if (s.id > maxId) maxId = s.id
+      this.counters[s.kind]++
+    }
+    this.nextId = maxId + 1
   }
 
   private computeAccelerations() {
@@ -492,7 +589,8 @@ export class Simulation {
               b.vx -= dv * tx
               b.vy -= dv * ty
               // 吸积增亮：ISCO 内坠落物体引力能释放 → 偶发闪光（吸积盘发光）
-              if (depth > 0.5 && this.effects.length < this.perf.effectMax && Math.random() < 0.06) {
+              // 镜像模式不本地造特效——吸积/并合特效由服务器权威事件下发
+              if (!this.mirror && depth > 0.5 && this.effects.length < this.perf.effectMax && Math.random() < 0.06) {
                 this.addEffect(b.x, b.y, b.radius * 2.5 + 2, '#ffb08a', 'merge')
               }
             }
@@ -664,7 +762,7 @@ export class Simulation {
             // 超临界撞击 → 碎裂
             this.shatter(big, small)
             dead.add(small.id)
-          } else if (relV < vEsc * 0.35) {
+          } else if (relV < vEsc * 0.2) {
             // 低速接触 → 并合（动能不足以克服引力束缚）
             this.merge(big, small)
             dead.add(small.id)
@@ -678,8 +776,8 @@ export class Simulation {
             const vty = relVy - vn * ny // 切向相对速度
             const vt = Math.hypot(vtx, vty)
 
-            // 恢复系数：天体是部分弹性体（岩石 ~0.1-0.3，气态 ~0.05）
-            const e = 0.15
+            // 恢复系数：岩石天体 ~0.3-0.4（撞上去要肉眼可见地弹开），气态更低
+            const e = 0.35
             // 切向摩擦系数：决定自旋转换效率
             const mu = 0.25
 
@@ -795,6 +893,8 @@ export class Simulation {
   private merge(a: Body, b: Body) {
     // a 吸收 b：动量守恒、质量相加、体积相加
     const total = a.mass + b.mass
+    // 撞击相对速度（并合表现按能量分级用，要在 a 被原地更新前取）
+    const relV = Math.hypot(b.vx - a.vx, b.vy - a.vy)
     const mx = (a.x * a.mass + b.x * b.mass) / total
     const my = (a.y * a.mass + b.y * b.mass) / total
     a.vx = (a.vx * a.mass + b.vx * b.mass) / total
@@ -805,6 +905,27 @@ export class Simulation {
     a.radius = Math.cbrt(a.radius ** 3 + b.radius ** 3)
     // 恒星吞并质量累计（驱动生命周期）
     if (a.kind === 'star' || a.kind === 'blackhole') a.absorbed = (a.absorbed ?? 0) + b.mass
+
+    // —— 黑洞优先级最高：并合任一方是黑洞，结果必为黑洞（恒星质量再大也只是坠进去）——
+    if (a.kind !== 'blackhole' && b.kind === 'blackhole') {
+      a.kind = 'blackhole'
+      a.name = `黑洞 Ω-${++this.counters.blackhole}`
+      a.lifeStage = 'blackhole'
+      a.color = '#05030c'
+      a.glow = 'rgba(164,144,194,0.85)'
+      a.radius = radiusFor('blackhole', total)
+      this.effects.push({
+        x: mx,
+        y: my,
+        age: 0,
+        ttl: 0.9,
+        size: a.radius * 3 + 6,
+        color: '#a490c2',
+        kind: 'merge',
+      })
+      this.merges++
+      return
+    }
 
     // —— 行星点燃为恒星：质量越过 13 倍木星（~2.47e4 单位）即成为褐矮星/恒星 ——
     if (a.kind === 'planet' && a.mass > 24000) {
@@ -828,20 +949,43 @@ export class Simulation {
         a.glow = st.glow
         a.radius = radiusFor('blackhole', total)
         this.addEffect(a.x, a.y, a.radius * 40 + 20, '#ff6b4a', 'merge')
-      } else if (st.stage !== prev) {
-        // 阶段跃迁（红巨星/白矮星）：半径与颜色变化 + 爆发闪光
-        a.color = st.color
-        a.glow = st.glow
-        a.radius = Math.max(radiusFor('star', total) * st.radiusFactor, a.radius * (st.stage === 'giant' ? 1.6 : 1))
-        if (st.stage !== 'main') this.addEffect(a.x, a.y, a.radius * 10 + 14, st.color, 'merge')
+      } else {
+        if (st.stage !== prev) {
+          // 阶段跃迁（红巨星/白矮星）：半径与颜色变化 + 爆发闪光
+          a.color = st.color
+          a.glow = st.glow
+          a.radius = Math.max(radiusFor('star', total) * st.radiusFactor, a.radius * (st.stage === 'giant' ? 1.6 : 1))
+          if (st.stage !== 'main') this.addEffect(a.x, a.y, a.radius * 10 + 14, st.color, 'merge')
+        }
+        // —— 恒星并合的物理表现：公共包层抛射 ——
+        // 撞击能量显著（撞过来的天体够大/够快）时：白闪 + 壳层扩散 + 溅射碎屑；
+        // 小天体坠入只激起一次亮斑，不做夸张表现
+        if (b.mass > total * 0.02 || relV > 2) {
+          this.addEffect(a.x, a.y, a.radius * 5 + 18, '#ffffff', 'merge')
+          this.effects.push({ x: a.x, y: a.y, age: 0, ttl: 1.4, size: a.radius * 12 + 48, color: '#ff9b4a', kind: 'merge' })
+          if (b.mass > total * 0.02 && this.bodies.length < 1200) {
+            // 溅射：并合甩出的包层物质，沿随机方向以逃逸量级的速度抛出
+            const pieces = 4
+            const eject = Math.min(b.mass * 0.08, a.mass * 0.01)
+            const mEach = eject / pieces
+            const vEj = Math.max(relV * 0.35, 1.2)
+            for (let k = 0; k < pieces; k++) {
+              const ang = Math.random() * Math.PI * 2
+              const frag = this.addBody({
+                kind: 'asteroid',
+                x: a.x + Math.cos(ang) * a.radius * 1.5,
+                y: a.y + Math.sin(ang) * a.radius * 1.5,
+                vx: a.vx + Math.cos(ang) * vEj,
+                vy: a.vy + Math.sin(ang) * vEj,
+                mass: mEach,
+              })
+              frag.cooldown = 4
+            }
+          }
+        } else {
+          this.addEffect(a.x, a.y, a.radius * 2.5 + 10, '#ffe9c9', 'merge')
+        }
       }
-    } else if (a.kind !== 'blackhole' && (b.kind === 'blackhole')) {
-      a.kind = 'blackhole'
-      a.name = `黑洞 Ω-${++this.counters.blackhole}`
-      a.lifeStage = 'blackhole'
-      a.color = '#05030c'
-      a.glow = 'rgba(164,144,194,0.85)'
-      a.radius = radiusFor('blackhole', total)
     }
 
     this.effects.push({
@@ -866,20 +1010,18 @@ export class Simulation {
     return m
   }
 
-  /** 点击拾取：屏幕上距离阈值内的最近天体 */
+  /** 点击拾取：命中圈（max(容差, 半径×1.6)）内屏幕距离最近的天体 */
   pick(wx: number, wy: number, tolerance: number): Body | null {
     let best: Body | null = null
-    let bestD = tolerance * tolerance
+    let bestD = Infinity
     for (const b of this.bodies) {
       const dx = b.x - wx
       const dy = b.y - wy
       const d2 = dx * dx + dy * dy
       const hit = Math.max(tolerance, b.radius * 1.6)
-      if (d2 < Math.max(bestD, hit * hit)) {
-        if (d2 < bestD || bestD === tolerance * tolerance) {
-          best = b
-          bestD = Math.min(d2, hit * hit)
-        }
+      if (d2 <= hit * hit && d2 < bestD) {
+        best = b
+        bestD = d2
       }
     }
     return best

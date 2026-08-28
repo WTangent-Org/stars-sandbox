@@ -1,10 +1,11 @@
-# 星球物理模拟器 —— WS 物理服务端一键安装（Windows）
-# 只装服务端：物理在这台机器上跑，网页端用已发布的页面（设置里填本机地址即可连上）
-# 用法（PowerShell）: irm https://raw.githubusercontent.com/WTangent-Org/nbody-sandbox/main/install.ps1 | iex
+# 星球物理模拟器 —— 全栈一体化服务一键安装（Windows）
+# 一台机器同时托管网页 + 跑权威物理 + 联机：装完浏览器直接打开 http://服务器IP:8321 即玩
+# 无需再单独托管网页，每个连接一个独立宇宙，互不影响
+# 用法（PowerShell）: irm https://raw.githubusercontent.com/WTangent-Org/stars-sandbox/main/install.ps1 | iex
 $ErrorActionPreference = 'Stop'
 
-$Repo = 'https://github.com/WTangent-Org/nbody-sandbox.git'
-$Dir  = if ($env:NBODY_DIR) { $env:NBODY_DIR } else { 'nbody-sandbox' }
+$Repo = 'https://github.com/WTangent-Org/stars-sandbox.git'
+$Dir  = if ($env:NBODY_DIR) { $env:NBODY_DIR } else { 'stars-sandbox' }
 $Port = if ($env:PORT) { $env:PORT } else { 8321 }
 
 Write-Host '==> 检查依赖'
@@ -27,14 +28,13 @@ Write-Host '==> 拉取代码'
 if (Test-Path "$Dir/.git") { git -C $Dir pull --ff-only } else { git clone --depth 1 $Repo $Dir }
 Set-Location $Dir
 
-Write-Host '==> 安装依赖并构建服务端'
+Write-Host '==> 安装依赖并构建（前端 + 服务端）'
 npm install
-npm run build:server
-
-Write-Host "==> 启动 WS 物理服务端（端口 $Port）"
-$env:PORT = $Port
-Start-Process -WindowStyle Hidden node -ArgumentList 'dist-server/server.js' -WorkingDirectory (Get-Location)
+npm run build
 
 Write-Host ''
-Write-Host "==> 完成！物理服务端运行中：本机:$Port"
-Write-Host "    玩家打开网页 → 设置 → 运行位置选「远程」→ 服务器地址填 <你的IP>:$Port"
+Write-Host '==> 完成！星球模拟器全栈一体化服务（网页托管 + 权威物理 + 联机），启动：'
+Write-Host "    cd $Dir"
+Write-Host "    `$env:PORT=$Port; node dist/boot.js"
+Write-Host ''
+Write-Host "    浏览器直接打开 http://<你的IP>:$Port 即玩，无需再单独托管网页"

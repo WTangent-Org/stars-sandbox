@@ -1,26 +1,30 @@
 /** 用户偏好设置：localStorage 持久化，跨会话保留 */
+import type { PerfTier } from './types'
+
 export interface Prefs {
   /** 摇杆模式：fixed=固定位置；float=随手移动（触点在侧区哪，摇杆就在哪） */
   joyMode: 'fixed' | 'float'
   /** 摇杆位置：left/right（固定模式下生效；浮动模式决定触发热区） */
   joySide: 'left' | 'right'
-  /** 预演缓冲领先时长（秒）：越长飞船未来轨迹画越远 */
+  /** 预演缓冲领先时长（秒）：越长飞船未来轨迹画越远（离线单机时生效） */
   leadSeconds: number
-  /** 运行位置：local=浏览器本地跑物理；remote=连服务器跑（浏览器只渲染） */
-  runMode: 'local' | 'remote'
-  /** 远程服务器地址（host:port 或 ws:// 完整地址） */
-  serverAddr: string
+  /** 联机房间号：空 = 公共大厅 */
+  roomCode: string
+  /** 客户端性能档位：auto = 按 FPS 自动调节（自动上限「高」），「极致」手动专属 */
+  perfTier: PerfTier | 'auto'
 }
 
-const KEY = 'nbody-prefs-v1'
+const KEY = 'nbody-prefs-v2'
 
 export const DEFAULT_PREFS: Prefs = {
   joyMode: 'fixed',
   joySide: 'left',
   leadSeconds: 10,
-  runMode: 'local',
-  serverAddr: '',
+  roomCode: '',
+  perfTier: 'auto',
 }
+
+const PERF_VALUES: Array<PerfTier | 'auto'> = ['auto', 'ultra', 'high', 'balanced', 'low', 'saver']
 
 export function loadPrefs(): Prefs {
   try {
@@ -31,8 +35,8 @@ export function loadPrefs(): Prefs {
       joyMode: p.joyMode === 'float' ? 'float' : 'fixed',
       joySide: p.joySide === 'right' ? 'right' : 'left',
       leadSeconds: [3, 6, 10, 20].includes(p.leadSeconds) ? p.leadSeconds : 10,
-      runMode: p.runMode === 'remote' ? 'remote' : 'local',
-      serverAddr: typeof p.serverAddr === 'string' ? p.serverAddr : '',
+      roomCode: typeof p.roomCode === 'string' ? p.roomCode : '',
+      perfTier: PERF_VALUES.includes(p.perfTier) ? p.perfTier : 'auto',
     }
   } catch {
     return { ...DEFAULT_PREFS }
