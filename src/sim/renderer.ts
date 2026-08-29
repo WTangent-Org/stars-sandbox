@@ -58,6 +58,18 @@ function drawStarLayer(ctx: CanvasRenderingContext2D, stars: StarDot[], w: numbe
 
 // —— 光晕精灵缓存：每色只生成一次，drawImage 比逐帧径向渐变快一个数量级 ——
 const glowSprites = new Map<string, HTMLCanvasElement>()
+
+/** 暗角渐变按 (ctx, w, h) 缓存——每帧新建径向渐变是纯浪费 */
+const vignetteCache = new WeakMap<CanvasRenderingContext2D, { w: number; h: number; grad: CanvasGradient }>()
+function getVignette(ctx: CanvasRenderingContext2D, w: number, h: number): CanvasGradient {
+  const c = vignetteCache.get(ctx)
+  if (c && c.w === w && c.h === h) return c.grad
+  const grad = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.25, w / 2, h / 2, Math.max(w, h) * 0.75)
+  grad.addColorStop(0, 'rgba(43,30,62,0.16)')
+  grad.addColorStop(1, 'rgba(7,4,15,0)')
+  vignetteCache.set(ctx, { w, h, grad })
+  return grad
+}
 // 飞船预测线缓存：key=飞船 id，最多每 120ms 重算一次
 const predictCache = new Map<number, { t: number; path: Array<{ x: number; y: number }> | null }>()
 
@@ -102,10 +114,7 @@ export function draw(
   // —— 深空底色 + 暗角 ——
   ctx.fillStyle = '#07040f'
   ctx.fillRect(0, 0, w, h)
-  const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.25, w / 2, h / 2, Math.max(w, h) * 0.75)
-  vg.addColorStop(0, 'rgba(43,30,62,0.16)')
-  vg.addColorStop(1, 'rgba(7,4,15,0)')
-  ctx.fillStyle = vg
+  ctx.fillStyle = getVignette(ctx, w, h)
   ctx.fillRect(0, 0, w, h)
 
   drawStarLayer(ctx, starfield.far, w, h, cam.x * 0.04 * cam.zoom, cam.y * 0.04 * cam.zoom)
