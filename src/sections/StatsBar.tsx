@@ -18,6 +18,7 @@ function fmtRealTime(days: number): string {
 }
 
 function fmtRealMass(kg: number): string {
+  if (!(kg > 0)) return '0kg'
   const e = Math.floor(Math.log10(kg))
   const m = kg / Math.pow(10, e)
   return `${m.toFixed(2)}e${e}kg`

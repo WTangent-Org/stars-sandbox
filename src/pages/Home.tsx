@@ -3,6 +3,7 @@ import { Simulation } from '../sim/engine'
 import { FutureBuffer } from '../sim/future'
 import { NetSim, type NetStatus } from '../sim/net'
 import { loadPreset, PRESETS } from '../sim/presets'
+import { kindForMass } from '../sim/engine'
 import { draw, makeStarfield, type SpawnPreview } from '../sim/renderer'
 import type { Body, Camera, PerfTier, PresetId, SimConfig, SimStats, SpawnSettings, ToolMode, UnitProfile } from '../sim/types'
 import { PERF_TIERS } from '../sim/types'
@@ -125,7 +126,7 @@ export default function Home() {
   const pointersRef = useRef(new Map<number, { x: number; y: number }>())
   const pinchRef = useRef<{ d0: number; zoom0: number; wx: number; wy: number } | null>(null)
   const modeRef = useRef<ToolMode>('pan')
-  const spawnCfgRef = useRef<SpawnSettings>({ kind: 'planet', mass: 0.5, autoOrbit: true })
+  const spawnCfgRef = useRef<SpawnSettings>({ kind: 'planet', mass: 20, autoOrbit: false })
   const selectedRef = useRef<number | null>(null)
   const followRef = useRef(false)
   // 未来预演缓冲（仅离线单机用）：影子模拟以快于画面的速度推演，渲染帧消费缓冲
@@ -899,7 +900,10 @@ export default function Home() {
       }
       let vx = (w.x - sp.sx) * V_SCALE
       let vy = (w.y - sp.sy) * V_SCALE
-      if (cfg.autoOrbit) {
+      // 拖拽位移（屏幕像素）：拉了明显一段虚线就用拖拽速度——拖拽意图优先于自动圆轨道
+      const dragPx = Math.hypot(w.x - sp.sx, w.y - sp.sy) * camRef.current.zoom
+      const dragged = dragPx > 12
+      if (cfg.autoOrbit && !dragged) {
         const host = sim.dominantMassive(sp.sx, sp.sy)
         if (host) {
           const dx = sp.sx - host.x
@@ -911,17 +915,18 @@ export default function Home() {
             vy = host.vy + (dx / d) * v
           }
         }
-        // 无主星（空白宇宙）：保留拖拽初速度——否则扔出去的天体没有速度，只能低速接触必然并合
+        // 无主星（空白宇宙）且无拖拽：静止放置
       }
       // 真实比例场景：生成物带视觉放大倍率，保持与场景内天体同一比例
       const useBoost = unitsRef.current != null
-      const visBoost = useBoost ? (cfg.kind === 'star' ? 15 : 8) : undefined
+      const kind = kindForMass(cfg.mass) // 类型由质量唯一决定（滑杆状态只是 UI 缓存）
+      const visBoost = useBoost ? (kind === 'star' ? 15 : 8) : undefined
       if (online) {
-        net.send({ type: 'spawn', kind: cfg.kind, x: sp.sx, y: sp.sy, vx, vy, mass: cfg.mass, visBoost })
+        net.send({ type: 'spawn', kind, x: sp.sx, y: sp.sy, vx, vy, mass: cfg.mass, visBoost })
         return
       }
       const body = sim.addBody({
-        kind: cfg.kind,
+        kind,
         x: sp.sx,
         y: sp.sy,
         vx,
@@ -1299,9 +1304,7 @@ export default function Home() {
     mode === 'spawn'
       ? spawnCfg.kind === 'ship'
         ? '点击画布部署飞船（自动进入环绕轨道）· ESC 取消'
-        : spawnCfg.autoOrbit
-          ? '点击画布放置天体 · 自动获得圆轨道速度 · ESC 取消'
-          : '按住拖拽放置天体 · 拖拽方向 = 初速度 · ESC 取消'
+        : '点击放置（自动圆轨道开启时获得环绕速度）· 按住拖拽拉虚线定初速度 · ESC 取消'
       : '拖动天体移动 / 甩出 · 拖动空白平移 · 滚轮缩放 · 空格暂停'
 
   const paused = online ? net.paused : localSim.config.paused

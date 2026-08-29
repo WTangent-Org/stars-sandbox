@@ -25,17 +25,41 @@ export function starAppearance(mass: number): { color: string; glow: string } {
   return { color: '#b8c9ff', glow: 'rgba(140,170,255,0.7)' } // 超巨星
 }
 
-/** 恒星生命周期（基于真实质量，单位 10^27 kg）：
- *  < 8 M☉（~16000）：主序星 →（吞并膨胀）→ 红巨星 → 白矮星
- *  ≥ 8 M☉：主序星 → 超巨星 →（吞并触发超新星）→ 中子星/黑洞 */
+// ———— 质量段：类型由质量唯一决定（创建 UI 与并合升级共用同一张表） ————
+export const MASS_BANDS: Array<{ min: number; kind: Exclude<BodyKind, 'ship'>; label: string; desc: string }> = [
+  { min: 0, kind: 'asteroid', label: '小行星', desc: '碎石堆 · 撞出碎片而非并合' },
+  { min: 0.1, kind: 'moon', label: '卫星', desc: '类月世界 · 可被行星捕获' },
+  { min: 10, kind: 'planet', label: '行星', desc: '岩石/气态巨行星 · 越过点燃线成为恒星' },
+  { min: 24000, kind: 'star', label: '恒星', desc: '红矮→类日→蓝白巨星→超巨星，靠吞并与岁月演化' },
+  { min: 500000, kind: 'blackhole', label: '黑洞', desc: '超大质量黑洞 · 视界内无物幸存' },
+]
+
+/** 质量对应的类型（飞船除外）。并合升级行星/卫星/小行星时用它重新定级 */
+export function kindForMass(mass: number): Exclude<BodyKind, 'ship'> {
+  let kind: Exclude<BodyKind, 'ship'> = 'asteroid'
+  for (const b of MASS_BANDS) if (mass >= b.min) kind = b.kind
+  return kind
+}
+
+/** 恒星生命周期（基于真实质量，单位 10^27 kg）。
+ *  演化由「吞并 + 岁月」共同驱动：吞并直接累计 absorbed；恒星还按质量三次方
+ *  的速率随模拟时间自然衰老（大质量恒星寿命短，真实规律），时间倍率可加速观看。
+ *  < 40 M☉（~80000）：主序星 →（膨胀）→ 红巨星 → 白矮星
+ *  ≥ 40 M☉：主序星 → 超巨星 →（超新星）→ 黑洞 */
 export interface StarStage {
   stage: 'main' | 'giant' | 'whitedwarf' | 'neutron' | 'blackhole'
   radiusFactor: number
   color: string
   glow: string
 }
+const SUPERNOVA_MASS = 80000
+/** 岁月演化速率：80000 质量的恒星约 30 秒真实时间进入红巨星（×100 倍率下半分钟） */
+const AGE_RATE = 8e-5
+export function starEvolutionRate(mass: number): number {
+  return AGE_RATE * Math.pow(mass / SUPERNOVA_MASS, 3)
+}
 export function starStageFor(mass: number, absorbed: number): StarStage {
-  if (mass < 16000) {
+  if (mass < SUPERNOVA_MASS) {
     if (absorbed > 0.45 * mass) return { stage: 'whitedwarf', radiusFactor: 0.04, color: '#e8f4ff', glow: 'rgba(210,235,255,0.5)' }
     if (absorbed > 0.18 * mass) return { stage: 'giant', radiusFactor: 3.4, color: '#ff8f5e', glow: 'rgba(255,130,80,0.65)' }
     return { stage: 'main', radiusFactor: 1, color: starAppearance(mass).color, glow: starAppearance(mass).glow }
@@ -296,6 +320,15 @@ export class Simulation {
     this.ageEffects(frameDt)
     const { timeScale } = this.config
     const total = frameDt * timeScale
+    // 岁月演化：恒星随模拟时间自然衰老（质量三次方速率，大质量恒星寿命短），
+    // 吞并与时间双驱动——只吃小碎块的恒星也能肉眼看到膨胀→塌缩的全过程
+    if (!this.mirror) {
+      for (const b of this.bodies) {
+        if (b.kind !== 'star') continue
+        b.absorbed = (b.absorbed ?? 0) + b.mass * starEvolutionRate(b.mass) * total
+        this.applyStarStage(b)
+      }
+    }
     // 碎片冷却按帧衰减（不是按子步）：子步数随时间倍率变化，按子步衰减会让冷却名存实亡
     for (const b of this.bodies) if ((b.cooldown ?? 0) > 0) b.cooldown = (b.cooldown ?? 0) - 1
     const n = this.bodies.length
@@ -715,10 +748,6 @@ export class Simulation {
         if (!a.solid && !b.solid) continue
         // 新生碎片冷却期内不碰撞：防止碎片云在生成瞬间级联
         if ((a.cooldown ?? 0) > 0 || (b.cooldown ?? 0) > 0) continue
-        // 卫星不与其环绕的行星碰撞：演示性近距卫星会周期性掠过宿主近心点，
-        // 但其轨道由希尔球束缚保证不逃逸，故此处豁免，避免误合并
-        const moonPlanet = (a.kind === 'moon' && b.kind === 'planet') || (a.kind === 'planet' && b.kind === 'moon')
-        if (moonPlanet) continue
         // 飞船免于常规碰撞合并：它负责近距离机动与掠飞，撞上什么也不消失（视界除外，见上）
         if (a.kind === 'ship' || b.kind === 'ship') continue
 
@@ -732,8 +761,10 @@ export class Simulation {
         {
           const [big, small] = a.mass >= b.mass ? [a, b] : [b, a]
           // 只对「行星/卫星」撕碎；小行星=碎屑/碎石堆（也是撕碎与碎裂的产物），
-          // 再撕只会级联雪崩，故豁免——它进入洛希极限就直接撞击/并合
-          const fragile = small.kind === 'planet' || small.kind === 'moon'
+          // 再撕只会级联雪崩，故豁免——它进入洛希极限就直接撞击/并合。
+          // 黑洞不撕碎：任何天体进洛希极限都是坠向视界，最终归宿是吞噬不是碎片环
+          const fragile =
+            (small.kind === 'planet' || small.kind === 'moon') && big.kind !== 'blackhole'
           if (fragile && big.mass / Math.max(small.mass, 1e-9) > 100 && d < this.rocheLimit(big, small)) {
             this.disrupt(big, small)
             dead.add(small.id)
@@ -750,19 +781,24 @@ export class Simulation {
             dead.add(small.id)
             continue
           }
+          // 黑洞吞噬任何接触者（含卫星）：不存在「卫星吃黑洞」——质量小的那方永远是被吞的
+          if (big.kind === 'blackhole') {
+            this.merge(big, small)
+            dead.add(small.id)
+            continue
+          }
           const relVx = b.vx - a.vx
           const relVy = b.vy - a.vy
           const relV = Math.hypot(relVx, relVy)
           const vEsc = Math.sqrt((2 * this.config.G * (a.mass + b.mass)) / Math.max(touch, 1e-9))
-          const canShatter = big.kind !== 'blackhole'
           // 小行星（碎片）不能再碎裂——防止级联雪崩导致天体数爆炸
           const smallIsFragment = small.kind === 'asteroid'
 
-          if (canShatter && !smallIsFragment && relV > vEsc * 2) {
+          if (!smallIsFragment && relV > vEsc * 1.5) {
             // 超临界撞击 → 碎裂
             this.shatter(big, small)
             dead.add(small.id)
-          } else if (relV < vEsc * 0.2) {
+          } else if (relV < vEsc * 0.3) {
             // 低速接触 → 并合（动能不足以克服引力束缚）
             this.merge(big, small)
             dead.add(small.id)
@@ -776,8 +812,10 @@ export class Simulation {
             const vty = relVy - vn * ny // 切向相对速度
             const vt = Math.hypot(vtx, vty)
 
-            // 恢复系数：岩石天体 ~0.3-0.4（撞上去要肉眼可见地弹开），气态更低
-            const e = 0.35
+            // 恢复系数按能量分级：高能撞击岩石弹跳（~0.35）；低于逃逸速度一半的
+            // 碰撞近乎完全非弹性（e=0.1）——否则引力每步泵入的能量会让贴脸天体
+            // 陷入「弹开-拉回」的数值极限环，永远不吸积
+            const e = relV < vEsc * 0.5 ? 0.1 : 0.35
             // 切向摩擦系数：决定自旋转换效率
             const mu = 0.25
 
@@ -800,14 +838,35 @@ export class Simulation {
             big.spin = (big.spin ?? 0) + spinGain
             small.spin = (small.spin ?? 0) - spinGain * (m1 / m2) * (big.radius / small.radius)
 
-            // 动能损失 → 热发光（能量耗散的可视化）
+            // 动能损失 → 热发光（能量耗散的可视化）；闪光放在接触点而非质心
             const keBefore = 0.5 * reduced * relV * relV
             const keAfter = 0.5 * reduced * (vn * vn * e * e + (vt - jt / reduced) ** 2)
             const heat = Math.max(keBefore - keAfter, 0)
+            // 接触点：从大天体中心沿撞击方向推到表面
+            const ctX = big.x - nx * big.radius
+            const ctY = big.y - ny * big.radius
             if (heat > 0.1) {
-              const cx = (big.x * m1 + small.x * m2) / (m1 + m2)
-              const cy = (big.y * m1 + small.y * m2) / (m1 + m2)
-              this.addEffect(cx, cy, Math.sqrt(heat) * 0.5 + 3, '#fbbf24', 'merge')
+              this.addEffect(ctX, ctY, Math.sqrt(heat) * 0.5 + 3, '#fbbf24', 'merge')
+            }
+            // 硬反弹溅碎片：动能足够大时从接触点崩出少量碎屑（非中心对称，撞击侧更多）
+            if (relV > vEsc * 0.7 && this.bodies.length < 1200) {
+              const nFrag = relV > vEsc * 1.1 ? 3 : 2
+              const eject = Math.min(small.mass * 0.02, big.mass * 0.002)
+              const mEach = eject / nFrag
+              for (let k = 0; k < nFrag; k++) {
+                // 碎片偏向弹回侧（撞击面反向）+ 切向散开
+                const back = Math.atan2(-ny, -nx) + (k - (nFrag - 1) / 2) * 0.7 + (Math.random() - 0.5) * 0.3
+                const spd = relV * (0.3 + Math.random() * 0.25)
+                const frag = this.addBody({
+                  kind: 'asteroid',
+                  x: ctX + Math.cos(back) * 1.5,
+                  y: ctY + Math.sin(back) * 1.5,
+                  vx: (big.vx + small.vx) / 2 + Math.cos(back) * spd,
+                  vy: (big.vy + small.vy) / 2 + Math.sin(back) * spd,
+                  mass: mEach,
+                })
+                frag.cooldown = 3
+              }
             }
 
             // 位置分离：防止重叠（把球推到刚好接触）
@@ -927,65 +986,56 @@ export class Simulation {
       return
     }
 
-    // —— 行星点燃为恒星：质量越过 13 倍木星（~2.47e4 单位）即成为褐矮星/恒星 ——
-    if (a.kind === 'planet' && a.mass > 24000) {
-      a.kind = 'star'
-      a.name = `恒星 ${GREEK[(this.counters.star++) % GREEK.length]}-N`
-      a.lifeStage = 'main'
-      const ap = starAppearance(a.mass)
-      a.color = ap.color
-      a.glow = ap.glow
+    // —— 类型按质量段重新定级：并合后质量跨段就升级（小行星+小行星=卫星……行星越过
+    //    点燃线成为恒星）；恒星/黑洞的归宿由生命周期与黑洞优先规则管辖，不在此改 ——
+    if (a.kind === 'asteroid' || a.kind === 'moon' || a.kind === 'planet') {
+      const promoted = kindForMass(a.mass)
+      if (promoted !== a.kind) {
+        a.kind = promoted
+        this.counters[promoted]++
+        if (promoted === 'star') {
+          // 行星点燃：褐矮星点火成为恒星（名字/外观按恒星来）
+          a.name = `恒星 ${GREEK[(this.counters.star++) % GREEK.length]}-N`
+          a.lifeStage = 'main'
+          const ap = starAppearance(a.mass)
+          a.color = ap.color
+          a.glow = ap.glow
+        } else {
+          a.name = this.makeName(promoted)
+          a.lifeStage = undefined
+        }
+      }
     }
 
     if (a.kind === 'star') {
-      const st = starStageFor(a.mass, a.absorbed ?? 0)
-      const prev = a.lifeStage
-      a.lifeStage = st.stage
-      if (st.stage === 'blackhole') {
-        // 超新星塌缩
-        a.kind = 'blackhole'
-        a.name = `黑洞 Ω-${++this.counters.blackhole}`
-        a.color = st.color
-        a.glow = st.glow
-        a.radius = radiusFor('blackhole', total)
-        this.addEffect(a.x, a.y, a.radius * 40 + 20, '#ff6b4a', 'merge')
-      } else {
-        if (st.stage !== prev) {
-          // 阶段跃迁（红巨星/白矮星）：半径与颜色变化 + 爆发闪光
-          a.color = st.color
-          a.glow = st.glow
-          a.radius = Math.max(radiusFor('star', total) * st.radiusFactor, a.radius * (st.stage === 'giant' ? 1.6 : 1))
-          if (st.stage !== 'main') this.addEffect(a.x, a.y, a.radius * 10 + 14, st.color, 'merge')
-        }
-        // —— 恒星并合的物理表现：公共包层抛射 ——
-        // 撞击能量显著（撞过来的天体够大/够快）时：白闪 + 壳层扩散 + 溅射碎屑；
-        // 小天体坠入只激起一次亮斑，不做夸张表现
-        if (b.mass > total * 0.02 || relV > 2) {
-          this.addEffect(a.x, a.y, a.radius * 5 + 18, '#ffffff', 'merge')
-          this.effects.push({ x: a.x, y: a.y, age: 0, ttl: 1.4, size: a.radius * 12 + 48, color: '#ff9b4a', kind: 'merge' })
-          if (b.mass > total * 0.02 && this.bodies.length < 1200) {
-            // 溅射：并合甩出的包层物质，沿随机方向以逃逸量级的速度抛出
-            const pieces = 4
-            const eject = Math.min(b.mass * 0.08, a.mass * 0.01)
-            const mEach = eject / pieces
-            const vEj = Math.max(relV * 0.35, 1.2)
-            for (let k = 0; k < pieces; k++) {
-              const ang = Math.random() * Math.PI * 2
-              const frag = this.addBody({
-                kind: 'asteroid',
-                x: a.x + Math.cos(ang) * a.radius * 1.5,
-                y: a.y + Math.sin(ang) * a.radius * 1.5,
-                vx: a.vx + Math.cos(ang) * vEj,
-                vy: a.vy + Math.sin(ang) * vEj,
-                mass: mEach,
-              })
-              frag.cooldown = 4
-            }
+      // 恒星并合的物理表现：公共包层抛射 —— 撞击能量显著（撞过来的天体够大/够快）
+      // 时：白闪 + 壳层扩散 + 溅射碎屑；小天体坠入只激起一次亮斑，不做夸张表现
+      if (b.mass > total * 0.02 || relV > 2) {
+        this.addEffect(a.x, a.y, a.radius * 5 + 18, '#ffffff', 'merge')
+        this.effects.push({ x: a.x, y: a.y, age: 0, ttl: 1.4, size: a.radius * 12 + 48, color: '#ff9b4a', kind: 'merge' })
+        if (b.mass > total * 0.02 && this.bodies.length < 1200) {
+          // 溅射：并合甩出的包层物质，沿随机方向以逃逸量级的速度抛出
+          const pieces = 4
+          const eject = Math.min(b.mass * 0.08, a.mass * 0.01)
+          const mEach = eject / pieces
+          const vEj = Math.max(relV * 0.35, 1.2)
+          for (let k = 0; k < pieces; k++) {
+            const ang = Math.random() * Math.PI * 2
+            const frag = this.addBody({
+              kind: 'asteroid',
+              x: a.x + Math.cos(ang) * a.radius * 1.5,
+              y: a.y + Math.sin(ang) * a.radius * 1.5,
+              vx: a.vx + Math.cos(ang) * vEj,
+              vy: a.vy + Math.sin(ang) * vEj,
+              mass: mEach,
+            })
+            frag.cooldown = 4
           }
-        } else {
-          this.addEffect(a.x, a.y, a.radius * 2.5 + 10, '#ffe9c9', 'merge')
         }
+      } else {
+        this.addEffect(a.x, a.y, a.radius * 2.5 + 10, '#ffe9c9', 'merge')
       }
+      this.applyStarStage(a)
     }
 
     this.effects.push({
@@ -1002,6 +1052,30 @@ export class Simulation {
 
   addEffect(x: number, y: number, size: number, color: string, kind: Effect['kind']) {
     this.effects.push({ x, y, age: 0, ttl: 0.6, size, color, kind })
+  }
+
+  /** 应用恒星生命周期阶段：跃迁时更新外观/半径，超新星塌缩成黑洞。吞并与岁月演化共用 */
+  private applyStarStage(a: Body) {
+    const st = starStageFor(a.mass, a.absorbed ?? 0)
+    const prev = a.lifeStage
+    a.lifeStage = st.stage
+    if (st.stage === 'blackhole') {
+      // 超新星塌缩
+      a.kind = 'blackhole'
+      a.name = `黑洞 Ω-${++this.counters.blackhole}`
+      a.color = st.color
+      a.glow = st.glow
+      a.radius = radiusFor('blackhole', a.mass)
+      this.addEffect(a.x, a.y, a.radius * 40 + 20, '#ff6b4a', 'merge')
+      return
+    }
+    if (st.stage !== prev) {
+      // 阶段跃迁（红巨星/白矮星）：半径与颜色变化 + 爆发闪光
+      a.color = st.color
+      a.glow = st.glow
+      a.radius = Math.max(radiusFor('star', a.mass) * st.radiusFactor, a.radius * (st.stage === 'giant' ? 1.6 : 1))
+      if (st.stage !== 'main') this.addEffect(a.x, a.y, a.radius * 10 + 14, st.color, 'merge')
+    }
   }
 
   get totalMass(): number {

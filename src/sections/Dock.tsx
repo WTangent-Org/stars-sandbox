@@ -1,17 +1,14 @@
 import { useState } from 'react'
-import type { BodyKind, PresetId, SimConfig, SpawnSettings, ToolMode } from '../sim/types'
+import type { PresetId, SimConfig, SpawnSettings, ToolMode } from '../sim/types'
 import { PRESETS } from '../sim/presets'
+import { MASS_BANDS, kindForMass } from '../sim/engine'
 import type { Prefs } from '../sim/prefs'
 import type { PlayerInfo } from '../shared/protocol'
 import type { NetStatus } from '../sim/net'
 
-const KIND_META: Record<Exclude<BodyKind, 'ship'>, { label: string; min: number; max: number; hint: string }> = {
-  star: { label: '恒星', min: 100, max: 60000, hint: '发光发热 · 质量决定颜色与归宿' },
-  planet: { label: '行星', min: 0.05, max: 24000, hint: '绕着恒星旋转的世界 · 超24000 点燃成恒星' },
-  moon: { label: '卫星', min: 0.0001, max: 0.5, hint: '环绕行星的小世界' },
-  asteroid: { label: '小行星', min: 0.0001, max: 0.1, hint: '轻如尘埃的碎块' },
-  blackhole: { label: '黑洞', min: 4000, max: 2e6, hint: '吞噬一切的深渊' },
-}
+/** 质量段上限（与引擎 MASS_BANDS 对齐，用于滑杆量程） */
+const MASS_MIN = 0.0001
+const MASS_MAX = 2e6
 
 /** 性能档位：描述行为而不是硬件档次（自动档上限「高」，「极致」手动专属） */
 const PERF_META: Array<{ v: SimConfig['perfTier']; label: string; desc: string }> = [
@@ -29,36 +26,6 @@ function fmtMass(m: number): string {
   if (m >= 1) return m.toFixed(2)
   if (m >= 0.001) return m.toFixed(4)
   return m.toExponential(1)
-}
-
-function SliderRow(props: {
-  label: string
-  value: number
-  display: string
-  min: number
-  max: number
-  step?: number
-  onChange: (v: number) => void
-}) {
-  const fill = ((props.value - props.min) / (props.max - props.min)) * 100
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between">
-        <span className="mg-label">{props.label}</span>
-        <span className="font-mono text-[11px] text-[#dbe4f3]">{props.display}</span>
-      </div>
-      <input
-        type="range"
-        className="mg-slider"
-        style={{ ['--fill' as string]: `${fill}%` }}
-        min={props.min}
-        max={props.max}
-        step={props.step ?? 1}
-        value={props.value}
-        onChange={(e) => props.onChange(parseFloat(e.target.value))}
-      />
-    </div>
-  )
 }
 
 function ToggleRow(props: { label: string; on: boolean; onChange: (v: boolean) => void }) {
@@ -145,18 +112,18 @@ interface Props {
   tab?: DockTab
 }
 
-/** 左侧停靠栏：场景/创建/飞船/存档/联机/设置 六页合一 */
+/** 左侧停靠栏：场景/创建/飞船/联机/设置 五页合一 */
 export default function Dock(p: Props) {
   const [tab, setTab] = useState<DockTab>(p.tab ?? 'scene')
-  const kind = p.spawn.kind === 'ship' ? null : KIND_META[p.spawn.kind as Exclude<BodyKind, 'ship'>]
-  const massToSlider = (m: number) => {
-    const k = kind ?? KIND_META.planet
-    return ((Math.log10(Math.max(m, k.min)) - Math.log10(k.min)) / (Math.log10(k.max) - Math.log10(k.min))) * 100
-  }
+  // 类型由质量唯一决定（与引擎同一张质量段表）；滑杆在对数质量轴上滑动
+  const mass = p.spawn.mass
+  const kind = p.spawn.kind === 'ship' ? 'ship' : kindForMass(mass)
+  const band = MASS_BANDS.slice().reverse().find((b) => mass >= b.min) ?? MASS_BANDS[0]
+  const massToSlider = (m: number) =>
+    ((Math.log10(Math.max(m, MASS_MIN)) - Math.log10(MASS_MIN)) / (Math.log10(MASS_MAX) - Math.log10(MASS_MIN))) * 100
   const sliderToMass = (s: number) => {
-    const k = kind ?? KIND_META.planet
-    const v = Math.pow(10, Math.log10(k.min) + (s / 100) * (Math.log10(k.max) - Math.log10(k.min)))
-    return parseFloat(v.toPrecision(3))
+    const v = Math.pow(10, Math.log10(MASS_MIN) + (s / 100) * (Math.log10(MASS_MAX) - Math.log10(MASS_MIN)))
+    return Math.min(MASS_MAX, Math.max(MASS_MIN, parseFloat(v.toPrecision(3))))
   }
 
   const netStatusLabel = p.net.online
@@ -257,42 +224,40 @@ export default function Dock(p: Props) {
                 ✦ 创建天体
               </button>
             </div>
-            <div className="grid grid-cols-3 gap-1">
-              {(Object.keys(KIND_META) as Array<Exclude<BodyKind, 'ship'>>).map((k) => (
-                <button
-                  key={k}
-                  onClick={() => p.onSpawn({ kind: k, mass: sliderToMass(50) })}
-                  className={`rounded border px-1 py-1 text-[11px] transition-all ${
-                    p.spawn.kind === k
-                      ? 'border-[#22d3ee]/60 bg-[#22d3ee]/15 text-[#dbe4f3]'
-                      : 'border-[#1a2540] text-[#dbe4f3]/55 hover:border-[#22d3ee]/35'
-                  }`}
-                >
-                  {KIND_META[k].label}
-                </button>
-              ))}
+            {/* 类型 = 质量段：一个滑杆定生死，各质量段边界一目了然 */}
+            <div className="space-y-1.5">
+              <div className="flex items-baseline justify-between">
+                <span className="mg-label">天体质量</span>
+                <span className="font-mono text-[11px] text-[#dbe4f3]">{fmtMass(mass)} M*</span>
+              </div>
+              <input
+                type="range"
+                className="mg-slider"
+                style={{ ['--fill' as string]: `${massToSlider(mass)}%` }}
+                min={0}
+                max={100}
+                step={0.5}
+                value={massToSlider(mass)}
+                onChange={(e) => p.onSpawn({ kind: kindForMass(sliderToMass(parseFloat(e.target.value))), mass: sliderToMass(parseFloat(e.target.value)) })}
+              />
+              <div className="flex justify-between font-mono text-[8px] text-[#5b6b8c]/50">
+                {MASS_BANDS.map((b) => (
+                  <span key={b.kind} className={b.kind === kind ? 'text-[#22d3ee]' : undefined}>
+                    {b.label}
+                  </span>
+                ))}
+              </div>
             </div>
-            {kind && (
-              <>
-                <SliderRow
-                  label="质量"
-                  value={massToSlider(p.spawn.mass)}
-                  display={`${fmtMass(p.spawn.mass)} M*`}
-                  min={0}
-                  max={100}
-                  step={0.5}
-                  onChange={(v) => p.onSpawn({ mass: sliderToMass(v) })}
-                />
-                <ToggleRow label="自动圆轨道（绕最近主星）" on={p.spawn.autoOrbit} onChange={(v) => p.onSpawn({ autoOrbit: v })} />
-                <p className="text-[10.5px] leading-relaxed text-[#5b6b8c]">
-                  {p.mode === 'spawn'
-                    ? p.spawn.autoOrbit
-                      ? '在画布上点击放置，自动获得环绕最近大质量天体的圆轨道速度。'
-                      : '在画布上按住并拖拽：落点即天体位置，拖拽方向与长度决定初速度。'
-                    : '切换到「创建天体」后，在画布上点击或拖拽即可放置新天体。'}
-                </p>
-              </>
-            )}
+            <p className="rounded border border-[#1a2540] px-2 py-1.5 text-[10.5px] leading-relaxed text-[#5b6b8c]">
+              <span className="text-[#dbe4f3]/90">{band.label}</span> · {band.desc}
+              {kind === 'star' && mass < 800 ? '（红矮星）' : kind === 'star' && mass < 4000 ? '（类日）' : kind === 'star' && mass < 16000 ? '（蓝白巨星）' : kind === 'star' ? '（超巨星）' : ''}
+            </p>
+            <ToggleRow label="自动圆轨道（绕最近主星）" on={p.spawn.autoOrbit} onChange={(v) => p.onSpawn({ autoOrbit: v })} />
+            <p className="text-[10.5px] leading-relaxed text-[#5b6b8c]">
+              {p.mode === 'spawn'
+                ? '点击放置（自动圆轨道开启时获得环绕速度）；按住拖拽则拉出虚线，拖拽方向 = 初速度（优先于圆轨道）。'
+                : '切换到「创建天体」后，在画布上点击或拖拽即可放置新天体。'}
+            </p>
           </>
         )}
 
@@ -353,12 +318,15 @@ export default function Dock(p: Props) {
               </span>
             </div>
             {!p.net.online && (
-              <button
-                onClick={p.onReconnect}
-                className="w-full rounded border border-[#22d3ee]/40 bg-[#22d3ee]/10 px-2 py-1.5 text-[12px] text-[#dbe4f3] hover:bg-[#22d3ee]/20"
-              >
-                ⇆ 连接服务器
-              </button>
+              <p className="rounded border border-[#1a2540] px-2.5 py-2 text-[10.5px] leading-relaxed text-[#5b6b8c]">
+                {p.net.status === 'connecting' ? (
+                  <span className="text-[#fbbf24]">连接中…</span>
+                ) : (
+                  <>
+                    当前是本地单机宇宙。要联机：回主菜单选「多人游戏」加入大厅/房号；或在游戏菜单（右上 ☰）把当前宇宙「对局域网开放」给朋友。
+                  </>
+                )}
+              </p>
             )}
             {p.net.online && (
               <>
