@@ -133,37 +133,6 @@ export function draw(
     ctx.globalAlpha = 1
   }
 
-  // —— 紧密双星质心标记：两颗大质量天体（恒星/黑洞）靠得近时，画它们的公共质心 ——
-  // 轨道根数与直觉都以质心为准；互绕的双星/双黑洞会看到质心几乎不动
-  {
-    const massive = sim.bodies.filter((b) => b.alive && (b.kind === 'star' || b.kind === 'blackhole') && b.mass >= 200)
-    let drawn = 0
-    for (let i = 0; i < massive.length && drawn < 4; i++) {
-      const a = massive[i]
-      for (let j = i + 1; j < massive.length && drawn < 4; j++) {
-        const b = massive[j]
-        const d = Math.hypot(b.x - a.x, b.y - a.y)
-        // 紧密：间距与两者半径同量级（互绕系统），且明显互相绕转（间距小于 12 倍半径和）
-        if (d > (a.radius + b.radius) * 12 || d < 1e-6) continue
-        const M = a.mass + b.mass
-        const cx = (a.x * a.mass + b.x * b.mass) / M
-        const cy = (a.y * a.mass + b.y * b.mass) / M
-        const r = 7 / cam.zoom // 屏幕上恒定 7px
-        ctx.strokeStyle = 'rgba(219,228,243,0.55)'
-        ctx.lineWidth = 1 / cam.zoom
-        ctx.beginPath()
-        ctx.arc(cx, cy, r, 0, Math.PI * 2)
-        ctx.moveTo(cx - r * 1.6, cy)
-        ctx.lineTo(cx + r * 1.6, cy)
-        ctx.moveTo(cx, cy - r * 1.6)
-        ctx.lineTo(cx, cy + r * 1.6)
-        ctx.stroke()
-        drawn++
-        break
-      }
-    }
-  }
-
   // —— 飞船未来轨迹（虚线） ——
   // 优先从预演缓冲读真实 N 体未来（加速影子模拟的推演结果，非近似外推）；
   // 缓冲不可用（大星系/刚分叉重建中）时回退到 N 体近似预测器
@@ -208,6 +177,37 @@ export function draw(
       ctx.stroke()
       ctx.setLineDash([])
     }
+
+  // —— 紧密双星质心标记：两颗大质量天体（恒星/黑洞）靠得近时，画它们的公共质心 ——
+  // 轨道根数与直觉都以质心为准；互绕的双星/双黑洞会看到质心几乎不动
+  {
+    const massive = sim.bodies.filter((b) => b.alive && (b.kind === 'star' || b.kind === 'blackhole') && b.mass >= 200)
+    let drawn = 0
+    for (let i = 0; i < massive.length && drawn < 4; i++) {
+      const a = massive[i]
+      for (let j = i + 1; j < massive.length && drawn < 4; j++) {
+        const b = massive[j]
+        const d = Math.hypot(b.x - a.x, b.y - a.y)
+        // 紧密：间距与两者半径同量级（互绕系统），且明显互相绕转（间距小于 12 倍半径和）
+        if (d > (a.radius + b.radius) * 12 || d < 1e-6) continue
+        const M = a.mass + b.mass
+        const cx = (a.x * a.mass + b.x * b.mass) / M
+        const cy = (a.y * a.mass + b.y * b.mass) / M
+        const r = 7 / cam.zoom // 屏幕上恒定 7px
+        ctx.strokeStyle = 'rgba(219,228,243,0.55)'
+        ctx.lineWidth = 1 / cam.zoom
+        ctx.beginPath()
+        ctx.arc(cx, cy, r, 0, Math.PI * 2)
+        ctx.moveTo(cx - r * 1.6, cy)
+        ctx.lineTo(cx + r * 1.6, cy)
+        ctx.moveTo(cx, cy - r * 1.6)
+        ctx.lineTo(cx, cy + r * 1.6)
+        ctx.stroke()
+        drawn++
+        break
+      }
+    }
+  }
   }
 
   // —— 碰撞 / 生成特效 ——
@@ -535,8 +535,11 @@ function drawBody(ctx: CanvasRenderingContext2D, b: Body, zoom: number, now: num
   // 视觉半径：真实比例场景用 visBoost 统一放大（保持相互比例），
   // 再套一个随缩放纵小的最小像素半径，保证极端缩小时仍可点击/可见
   // 最小可视半径随光晕项让位：大天体光晕本身很大，无需地板，避免小卫星看起来和行星一样大
+  // visBoost 渲染端封顶：天体本身半径够大就不再放大——否则超巨星的辉光能淹没
+  // 整个屏幕（旧存档里 visBoost=15 的大质量恒星同样被此兜住）
+  const boost = Math.max(1, Math.min(b.visBoost ?? 1, 24 / Math.max(1, b.radius)))
   const minR = (1.5 / zoom) / (1 + (b.visBoost ?? 1) * 0.2)
-  const r = Math.max(b.radius * (b.visBoost ?? 1), minR)
+  const r = Math.max(b.radius * boost, minR)
   if (b.kind === 'ship') {
     // 三角形飞船：机头沿速度方向（静止时沿推力方向），推进时画尾焰
     const vMag = Math.hypot(b.vx, b.vy)

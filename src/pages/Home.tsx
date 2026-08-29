@@ -3,7 +3,7 @@ import { Simulation } from '../sim/engine'
 import { FutureBuffer } from '../sim/future'
 import { NetSim, type NetStatus } from '../sim/net'
 import { loadPreset, PRESETS } from '../sim/presets'
-import { kindForMass } from '../sim/engine'
+import { kindForMass, radiusFor } from '../sim/engine'
 import { draw, makeStarfield, type SpawnPreview } from '../sim/renderer'
 import type { Body, Camera, PerfTier, PresetId, SimConfig, SimStats, SpawnSettings, ToolMode, UnitProfile } from '../sim/types'
 import { PERF_TIERS } from '../sim/types'
@@ -917,10 +917,11 @@ export default function Home() {
         }
         // 无主星（空白宇宙）且无拖拽：静止放置
       }
-      // 真实比例场景：生成物带视觉放大倍率，保持与场景内天体同一比例
+      // 真实比例场景：生成物带视觉放大倍率，保持与场景内天体同一比例；
+      // 放大倍率随实际半径衰减——大质量天体本身可见，再放大只会辉光淹屏
       const useBoost = unitsRef.current != null
       const kind = kindForMass(cfg.mass) // 类型由质量唯一决定（滑杆状态只是 UI 缓存）
-      const visBoost = useBoost ? (kind === 'star' ? 15 : 8) : undefined
+      const visBoost = useBoost ? Math.max(1, Math.min(15, 24 / Math.max(1, radiusFor(kind, cfg.mass)))) : undefined
       if (online) {
         net.send({ type: 'spawn', kind, x: sp.sx, y: sp.sy, vx, vy, mass: cfg.mass, visBoost })
         return
