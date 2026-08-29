@@ -12,6 +12,7 @@
 import { Simulation } from './engine'
 import { PERF_TIERS, type BodyKind, type WorldState } from './types'
 import { decodeFrame, KIND_CODE, type BodyPerm, type ClientCmd, type PlayerInfo, type ServerMsg, type VoteMsg } from '../shared/protocol'
+import { recordTrail, ageEffects } from './trail'
 
 export type NetStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
@@ -345,8 +346,6 @@ export class NetSim {
     const now = performance.now()
     const span = Math.max(this.tickMs, 30)
     const alpha = Math.min(Math.max((now - this.recvAt) / span, 0), 1.5) // 允许轻微外推
-    const maxTrail = this.mirror.bodies.length > 200 ? 70 : 320
-    const spacing2 = (Math.max(1.5 / zoom, 1e-6) * 1.5) ** 2
     for (const b of this.mirror.bodies) {
       if (!b.held) {
         const c = this.curr.get(b.id)
@@ -356,20 +355,11 @@ export class NetSim {
           b.y = p.y + (c.y - p.y) * alpha
         }
       }
-      // 轨迹：本地追加（网络帧不携带轨迹）；开关读镜像本地配置（渲染层行为，不走服务器）
-      if (this.mirror.config.trails) {
-        const last = b.trail[b.trail.length - 1]
-        const dx = b.x - (last?.x ?? Infinity)
-        const dy = b.y - (last?.y ?? Infinity)
-        if (dx * dx + dy * dy > spacing2) {
-          b.trail.push({ x: b.x, y: b.y })
-          if (!this.mirror.config.trailsForever && b.trail.length > maxTrail) b.trail.splice(0, 40)
-        }
-      }
+      // 轨迹：本地追加（网络帧不携带轨迹）；与引擎同一套采样/裁剪规则
+      recordTrail(this.mirror.config, b, b.x, b.y, zoom, this.mirror.bodies.length)
     }
     const dt = this.lastInterpolate ? (now - this.lastInterpolate) / 1000 : 0
     this.lastInterpolate = now
-    for (const e of this.mirror.effects) e.age += dt
-    this.mirror.effects = this.mirror.effects.filter((e) => e.age < e.ttl)
+    this.mirror.effects = ageEffects(this.mirror.effects, dt)
   }
 }

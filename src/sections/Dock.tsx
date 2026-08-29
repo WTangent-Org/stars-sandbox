@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { PresetId, SimConfig, SpawnSettings, ToolMode } from '../sim/types'
 import { PRESETS } from '../sim/presets'
 import { MASS_BANDS, kindForMass } from '../sim/engine'
+import { fmtMass } from '../sim/format'
 import type { Prefs } from '../sim/prefs'
 import type { PlayerInfo } from '../shared/protocol'
 import type { NetStatus } from '../sim/net'
@@ -19,14 +20,6 @@ const PERF_META: Array<{ v: SimConfig['perfTier']; label: string; desc: string }
   { v: 'high', label: '高', desc: '客户端补算 · 更多子步 · 长轨迹' },
   { v: 'ultra', label: '极致', desc: '手动专属：最大子步与特效，重负载场景慎用' },
 ]
-
-function fmtMass(m: number): string {
-  if (m >= 10000) return (m / 1000).toFixed(1) + 'k'
-  if (m >= 100) return m.toFixed(0)
-  if (m >= 1) return m.toFixed(2)
-  if (m >= 0.001) return m.toFixed(4)
-  return m.toExponential(1)
-}
 
 function ToggleRow(props: { label: string; on: boolean; onChange: (v: boolean) => void }) {
   return (

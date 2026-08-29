@@ -1,4 +1,6 @@
 import { Simulation } from './engine'
+import { trailCap } from './trail'
+import { TRAIL } from './config'
 
 /** 缓冲帧：全场天体的最小状态（按主模拟 bodies 顺序一一对应） */
 export interface Frame {
@@ -175,7 +177,7 @@ export class FutureBuffer {
       if (sim.config.trails && dx * dx + dy * dy > 1e-12) {
         if (dx * dx + dy * dy > 0.0016) {
           b.trail.push({ x: f.x[i], y: f.y[i] })
-          if (!sim.config.trailsForever && b.trail.length > 320) b.trail.splice(0, 40)
+          if (!sim.config.trailsForever && b.trail.length > trailCap(sim.bodies.length)) b.trail.splice(0, TRAIL.trimStep)
         }
       }
       b.x = f.x[i]

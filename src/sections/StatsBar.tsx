@@ -1,34 +1,5 @@
 import type { SimStats, UnitProfile } from '../sim/types'
-
-function fmtTime(t: number): string {
-  if (t < 1000) return t.toFixed(1)
-  if (t < 100000) return t.toFixed(0)
-  return t.toExponential(2)
-}
-
-function fmtMass(m: number): string {
-  if (m < 1000) return m.toPrecision(3)
-  if (m < 1000000) return (m / 1000).toPrecision(3) + 'k'
-  return (m / 1000000).toPrecision(3) + 'M'
-}
-
-function fmtRealTime(days: number): string {
-  if (days < 730) return days.toFixed(0) + ' 天'
-  return (days / 365.25).toFixed(2) + ' 年'
-}
-
-function fmtRealMass(kg: number): string {
-  if (!(kg > 0)) return '0kg'
-  const e = Math.floor(Math.log10(kg))
-  const m = kg / Math.pow(10, e)
-  return `${m.toFixed(2)}e${e}kg`
-}
-
-function fmtZoom(z: number): string {
-  if (z >= 100) return z.toFixed(0) + '×'
-  if (z >= 1) return z.toFixed(2) + '×'
-  return z.toFixed(3) + '×'
-}
+import { fmtTime, fmtMass, fmtRealTime, fmtRealMass, fmtZoom } from '../sim/format'
 
 export default function StatsBar(props: { stats: SimStats; zoom: number; running: boolean; units?: UnitProfile }) {
   const s = props.stats

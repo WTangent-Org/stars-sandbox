@@ -1,4 +1,5 @@
 import type { Body, BodyKind, Effect, SimConfig, TrailPoint, PerfConfig, WorldState } from './types'
+import { COLLISION, LIFECYCLE, BLACKHOLE, TRAIL, SNAPSHOTS } from './config'
 import { PERF_TIERS } from './types'
 
 /** 飞船推进器加速度（模拟单位/时间²），随油门缩放。
@@ -52,20 +53,20 @@ export interface StarStage {
   color: string
   glow: string
 }
-const SUPERNOVA_MASS = 80000
+const SUPERNOVA_MASS = LIFECYCLE.supernovaMass
 /** 岁月演化速率：80000 质量的恒星约 30 秒真实时间进入红巨星（×100 倍率下半分钟） */
-const AGE_RATE = 8e-5
+const AGE_RATE = LIFECYCLE.ageRate
 export function starEvolutionRate(mass: number): number {
   return AGE_RATE * Math.pow(mass / SUPERNOVA_MASS, 3)
 }
 export function starStageFor(mass: number, absorbed: number): StarStage {
   if (mass < SUPERNOVA_MASS) {
-    if (absorbed > 0.45 * mass) return { stage: 'whitedwarf', radiusFactor: 0.04, color: '#e8f4ff', glow: 'rgba(210,235,255,0.5)' }
-    if (absorbed > 0.18 * mass) return { stage: 'giant', radiusFactor: 3.4, color: '#ff8f5e', glow: 'rgba(255,130,80,0.65)' }
+    if (absorbed > LIFECYCLE.whiteDwarfAt * mass) return { stage: 'whitedwarf', radiusFactor: 0.04, color: '#e8f4ff', glow: 'rgba(210,235,255,0.5)' }
+    if (absorbed > LIFECYCLE.giantAt * mass) return { stage: 'giant', radiusFactor: 3.4, color: '#ff8f5e', glow: 'rgba(255,130,80,0.65)' }
     return { stage: 'main', radiusFactor: 1, color: starAppearance(mass).color, glow: starAppearance(mass).glow }
   }
-  if (absorbed > 0.25 * mass) return { stage: 'blackhole', radiusFactor: 0.25, color: '#05030c', glow: 'rgba(164,144,194,0.85)' }
-  if (absorbed > 0.1 * mass) return { stage: 'giant', radiusFactor: 2.2, color: '#ffb08a', glow: 'rgba(255,170,120,0.65)' }
+  if (absorbed > LIFECYCLE.massiveCollapseAt * mass) return { stage: 'blackhole', radiusFactor: 0.25, color: '#05030c', glow: 'rgba(164,144,194,0.85)' }
+  if (absorbed > LIFECYCLE.massiveGiantAt * mass) return { stage: 'giant', radiusFactor: 2.2, color: '#ffb08a', glow: 'rgba(255,170,120,0.65)' }
   return { stage: 'main', radiusFactor: 1, color: starAppearance(mass).color, glow: starAppearance(mass).glow }
 }
 
@@ -305,7 +306,7 @@ export class Simulation {
       // 每 1.5 秒真实时间存一帧快照，供时间回退；最多保留 160 帧（镜像不回退，免存）
       if (!this.mirror) {
         this.snapTimer += frameDt
-        if (this.snapTimer >= 1.5) {
+        if (this.snapTimer >= SNAPSHOTS.interval) {
           this.snapTimer = 0
           this.saveSnapshot()
         }
@@ -362,8 +363,8 @@ export class Simulation {
         for (const b of this.bodies) {
           if (b.kind === 'blackhole') continue
           const d = Math.hypot(b.x - bh.x, b.y - bh.y)
-          if (d < bh.radius * 3 && d > 1e-9) {
-            const local = Math.sqrt((d * d * d) / (this.config.G * bh.mass)) / 100
+          if (d < bh.radius * BLACKHOLE.shieldZone && d > 1e-9) {
+            const local = Math.sqrt((d * d * d) / (this.config.G * bh.mass)) / BLACKHOLE.shieldScale
             if (local < shieldDt) shieldDt = local
           }
         }
@@ -435,7 +436,7 @@ export class Simulation {
   /** 保存当前状态快照（大星系场景跳过）。轨迹不进快照——量大且回退后会自然重建，
    *  服务器每个房间挂 160 份快照，带轨迹就是几十 MB */
   private saveSnapshot() {
-    if (this.bodies.length > 60) return
+    if (this.bodies.length > SNAPSHOTS.maxBodies) return
     this.snapshots.push({
       simTime: this.simTime,
       merges: this.merges,
@@ -444,7 +445,7 @@ export class Simulation {
         trail: [] as TrailPoint[],
       })),
     })
-    if (this.snapshots.length > 160) this.snapshots.shift()
+    if (this.snapshots.length > SNAPSHOTS.max) this.snapshots.shift()
   }
 
   /** 回退到上一个快照点；返回回退到的模拟时间，失败返回 null */
@@ -593,9 +594,9 @@ export class Simulation {
 
   private integrate(dt: number, zoom = 1) {
     const { trails, trailsForever, G } = this.config
-    const maxTrail = this.bodies.length > 200 ? this.perf.trailMaxLarge : this.perf.trailMaxSmall
+    const maxTrail = this.bodies.length > TRAIL.manyBodies ? this.perf.trailMaxLarge : this.perf.trailMaxSmall
     // 采样间距随缩放自适应：真实场景放大看卫星时仍能记录细密轨道
-    const spacing = Math.max(1.5 / zoom, 1e-6)
+    const spacing = Math.max(TRAIL.spacing / zoom, 1e-6)
     const spacing2 = trailsForever ? (spacing * 2.7) ** 2 : spacing * spacing
     // 相对论：黑洞列表（ISCO 衰减用）
     const bhs = this.bodies.filter((x) => x.kind === 'blackhole')
@@ -649,7 +650,7 @@ export class Simulation {
         const dy = b.y - (last?.y ?? Infinity)
         if (dx * dx + dy * dy > spacing2) {
           b.trail.push({ x: b.x, y: b.y })
-          if (!trailsForever && b.trail.length > maxTrail) b.trail.splice(0, 40)
+          if (!trailsForever && b.trail.length > maxTrail) b.trail.splice(0, TRAIL.trimStep)
         }
       } else if (b.trail.length > 0) {
         b.trail.length = 0
@@ -688,7 +689,7 @@ export class Simulation {
     for (const bh of bhs) {
       for (const o of this.bodies) {
         if (o === bh || o.kind === 'blackhole' || !o.alive) continue
-        const capR = o.solid === false ? bh.radius * 0.04 : bh.radius
+        const capR = o.solid === false ? bh.radius * BLACKHOLE.captureRTracer : bh.radius * BLACKHOLE.captureR
         const dx = o.x - bh.x
         const dy = o.y - bh.y
         const d2 = dx * dx + dy * dy
@@ -703,7 +704,7 @@ export class Simulation {
         // 就在 3 倍视界内的实体天体，判定为这一步跨过了视界，直接吞噬。
         if (o.solid !== false && this.subDt > 0) {
           const stepLen = Math.hypot(o.vx, o.vy) * this.subDt
-          if (stepLen > capR * 2 && d2 < capR * capR * 9) {
+          if (stepLen > capR * BLACKHOLE.teleportGate && d2 < capR * capR * BLACKHOLE.teleportZone) {
             this.merge(bh, o)
             o.alive = false
             swallowed = true
@@ -747,7 +748,7 @@ export class Simulation {
             // 示踪恒星（solid:false）只按真实史瓦西半径捕获：视觉半径在星系尺度上
             // 比真实视界大几个量级，若按视觉半径捕获，相遇一次就把两个星系吃空。
             // 真实捕获截面极小，示踪星应当被散射而不是被吞噬。
-            const capR = o.solid === false ? bh.radius * 0.04 : bh.radius
+            const capR = o.solid === false ? bh.radius * BLACKHOLE.captureRTracer : bh.radius * BLACKHOLE.captureR
             if (dxh * dxh + dyh * dyh < capR * capR) {
               this.merge(bh, o)
               dead.add(o.id)
@@ -776,7 +777,7 @@ export class Simulation {
           // 黑洞不撕碎：任何天体进洛希极限都是坠向视界，最终归宿是吞噬不是碎片环
           const fragile =
             (small.kind === 'planet' || small.kind === 'moon') && big.kind !== 'blackhole'
-          if (fragile && big.mass / Math.max(small.mass, 1e-9) > 100 && d < this.rocheLimit(big, small)) {
+          if (fragile && big.mass / Math.max(small.mass, 1e-9) > COLLISION.rocheMassRatio && d < this.rocheLimit(big, small)) {
             this.disrupt(big, small)
             dead.add(small.id)
             continue
@@ -805,11 +806,11 @@ export class Simulation {
           // 小行星（碎片）不能再碎裂——防止级联雪崩导致天体数爆炸
           const smallIsFragment = small.kind === 'asteroid'
 
-          if (!smallIsFragment && relV > vEsc * 1.5) {
+          if (!smallIsFragment && relV > vEsc * COLLISION.shatterAt) {
             // 超临界撞击 → 碎裂
             this.shatter(big, small)
             dead.add(small.id)
-          } else if (relV < vEsc * 0.3) {
+          } else if (relV < vEsc * COLLISION.mergeBelow) {
             // 低速接触 → 并合（动能不足以克服引力束缚）
             this.merge(big, small)
             dead.add(small.id)
@@ -826,9 +827,9 @@ export class Simulation {
             // 恢复系数按能量分级：高能撞击岩石弹跳（~0.35）；低于逃逸速度一半的
             // 碰撞近乎完全非弹性（e=0.1）——否则引力每步泵入的能量会让贴脸天体
             // 陷入「弹开-拉回」的数值极限环，永远不吸积
-            const e = relV < vEsc * 0.5 ? 0.1 : 0.35
+            const e = relV < vEsc * COLLISION.softAt ? COLLISION.restitutionLow : COLLISION.restitutionHigh
             // 切向摩擦系数：决定自旋转换效率
-            const mu = 0.25
+            const mu = COLLISION.friction
 
             // 冲量计算（一维法向 + 二维切向）
             const m1 = big.mass
@@ -862,9 +863,9 @@ export class Simulation {
             // 硬反弹溅碎片：动能足够大时从接触点崩出少量碎屑（非中心对称，撞击侧更多）。
             // 质量从大天体扣除——碎屑不是凭空造出来的。
             // 碎屑（asteroid）撞击不再溅新屑：否则碎屑回落砸中行星会级联雪崩
-            if (relV > vEsc * 0.7 && !smallIsFragment && this.bodies.length < 1200) {
-              const nFrag = relV > vEsc * 1.1 ? 3 : 2
-              const eject = Math.min(small.mass * 0.02, big.mass * 0.002)
+            if (relV > vEsc * COLLISION.debrisAbove && !smallIsFragment && this.bodies.length < COLLISION.debrisFuse) {
+              const nFrag = relV > vEsc * COLLISION.shatterAt * 0.75 ? 3 : 2
+              const eject = Math.min(small.mass * COLLISION.debrisMassSmall, big.mass * COLLISION.debrisMassBig)
               const mEach = eject / nFrag
               big.mass -= eject
               big.radius = radiusFor(big.kind, big.mass)
@@ -880,7 +881,7 @@ export class Simulation {
                   vy: (big.vy + small.vy) / 2 + Math.sin(back) * spd,
                   mass: mEach,
                 })
-                frag.cooldown = 3
+                frag.cooldown = COLLISION.debrisCooldown
               }
             }
 
@@ -907,11 +908,11 @@ export class Simulation {
    *  碎片带 3 帧冷却，防止生成瞬间再次碰撞级联 */
   private disrupt(host: Body, victim: Body) {
     // 总量保险丝：碎片太多时退化为直接并合，防止任何意外级联拖垮整机
-    if (this.bodies.length > 2500) {
+    if (this.bodies.length > COLLISION.hardFuse) {
       this.merge(host, victim)
       return
     }
-    const pieces = 5
+    const pieces = COLLISION.disruptPieces
     const mEach = victim.mass / pieces
     const dx = victim.x - host.x
     const dy = victim.y - host.y
@@ -928,7 +929,7 @@ export class Simulation {
         vy: host.vy + Math.cos(ang) * vOrbit * (0.9 + 0.15 * Math.random()),
         mass: mEach,
       })
-      frag.cooldown = 3
+      frag.cooldown = COLLISION.debrisCooldown
     }
     this.addEffect(victim.x, victim.y, victim.radius * 8 + 6, '#fbbf24', 'merge')
   }
@@ -936,7 +937,7 @@ export class Simulation {
   /** 超临界撞击：大天体失去一部分质量，双方物质炸成碎片云向外抛射 */
   private shatter(big: Body, small: Body) {
     // 总量保险丝：同上
-    if (this.bodies.length > 2500) {
+    if (this.bodies.length > COLLISION.hardFuse) {
       this.merge(big, small)
       return
     }
@@ -944,7 +945,7 @@ export class Simulation {
     big.mass -= lostMass
     big.radius = radiusFor(big.kind, big.mass)
     const spray = Math.min(small.mass + lostMass, big.mass * 0.3)
-    const pieces = 4
+    const pieces = COLLISION.shatterPieces
     const mEach = spray / pieces
     const ang0 = Math.atan2(small.y - big.y, small.x - big.x)
     const vRel = Math.hypot(small.vx - big.vx, small.vy - big.vy)
@@ -959,7 +960,7 @@ export class Simulation {
         vy: big.vy + Math.sin(ang) * v,
         mass: mEach,
       })
-      frag.cooldown = 3
+      frag.cooldown = COLLISION.debrisCooldown
     }
     this.addEffect((big.x + small.x) / 2, (big.y + small.y) / 2, (big.radius + small.radius) * 5, '#f87171', 'merge')
   }
@@ -1027,13 +1028,13 @@ export class Simulation {
     if (a.kind === 'star') {
       // 恒星并合的物理表现：公共包层抛射 —— 撞击能量显著（撞过来的天体够大/够快）
       // 时：白闪 + 壳层扩散 + 溅射碎屑；小天体坠入只激起一次亮斑，不做夸张表现
-      if (b.mass > total * 0.02 || relV > 2) {
+      if (b.mass > total * LIFECYCLE.notableMassRatio || relV > LIFECYCLE.notableRelV) {
         this.addEffect(a.x, a.y, a.radius * 5 + 18, '#ffffff', 'merge')
         this.effects.push({ x: a.x, y: a.y, age: 0, ttl: 1.4, size: a.radius * 12 + 48, color: '#ff9b4a', kind: 'merge' })
-        if (b.mass > total * 0.02 && this.bodies.length < 1200) {
+        if (b.mass > total * LIFECYCLE.notableMassRatio && this.bodies.length < COLLISION.debrisFuse) {
           // 溅射：并合甩出的包层物质，沿随机方向以逃逸量级的速度抛出
           const pieces = 4
-          const eject = Math.min(b.mass * 0.08, a.mass * 0.01)
+          const eject = Math.min(b.mass * LIFECYCLE.ejectMassRatio, a.mass * LIFECYCLE.ejectCap)
           const mEach = eject / pieces
           const vEj = Math.max(relV * 0.35, 1.2)
           for (let k = 0; k < pieces; k++) {
@@ -1046,7 +1047,7 @@ export class Simulation {
               vy: a.vy + Math.sin(ang) * vEj,
               mass: mEach,
             })
-            frag.cooldown = 4
+            frag.cooldown = LIFECYCLE.ejectCooldown
           }
         }
       } else {
@@ -1085,7 +1086,7 @@ export class Simulation {
       a.color = st.color
       a.glow = st.glow
       a.radius = radiusFor('blackhole', a.mass)
-      this.addEffect(a.x, a.y, a.radius * 40 + 20, '#ff6b4a', 'merge')
+      this.addEffect(a.x, a.y, a.radius * BLACKHOLE.supernovaFx + 20, '#ff6b4a', 'merge')
       return
     }
     if (st.stage !== prev) {

@@ -4,6 +4,8 @@ import { FutureBuffer } from '../sim/future'
 import { NetSim, type NetStatus } from '../sim/net'
 import { loadPreset, PRESETS } from '../sim/presets'
 import { kindForMass, radiusFor } from '../sim/engine'
+import { resolveOrbitHost, circularOrbitVelocity, escapeSpeed } from '../sim/orbit'
+import { fmtSimTime } from '../sim/format'
 import { draw, makeStarfield, type SpawnPreview } from '../sim/renderer'
 import type { Body, Camera, PerfTier, PresetId, SimConfig, SimStats, SpawnSettings, ToolMode, UnitProfile } from '../sim/types'
 import { PERF_TIERS } from '../sim/types'
@@ -21,49 +23,6 @@ const V_SCALE = 0.022 // 拖拽距离 → 初速度
 
 /** 性能档位中文名（徽标用） */
 const TIER_LABEL: Record<PerfTier, string> = { ultra: '极致', high: '高', balanced: '均衡', low: '低', saver: '省电' }
-
-/**
- * 轨道宿主解析：找到引力主导者后，若它正处在紧密双星中（伴星质量不可忽略、
- * 双星间距远小于目标到它的距离），则改用双星质心（合成位置/速度/总质量）。
- * 这解决了双星系统里行星/恒星轨道根数乱跳的问题。
- */
-function resolveOrbitHost(sim: Simulation, x: number, y: number, excludeId?: number) {
-  const host = sim.dominantMassive(x, y, excludeId)
-  if (!host) return null
-  const dHost = Math.hypot(host.x - x, host.y - y)
-  let partner: Body | null = null
-  for (const p of sim.bodies) {
-    if (p.id === host.id || p.id === excludeId) continue
-    if (p.kind !== 'star' && p.kind !== 'blackhole') continue
-    if (p.mass < host.mass * 0.08) continue
-    const dSep = Math.hypot(p.x - host.x, p.y - host.y)
-    // 紧密双星：间距明显小于目标距离 → 对目标而言二者是一个质心
-    if (dSep < Math.max(dHost * 0.5, 1e-6) && (!partner || p.mass > partner.mass)) partner = p
-  }
-  if (!partner) return { x: host.x, y: host.y, vx: host.vx, vy: host.vy, mass: host.mass, radius: host.radius, name: host.name, kind: host.kind as Body['kind'] }
-  const M = host.mass + partner.mass
-  return {
-    x: (host.x * host.mass + partner.x * partner.mass) / M,
-    y: (host.y * host.mass + partner.y * partner.mass) / M,
-    vx: (host.vx * host.mass + partner.vx * partner.mass) / M,
-    vy: (host.vy * host.mass + partner.vy * partner.mass) / M,
-    mass: M,
-    radius: Math.max(host.radius, partner.radius),
-    name: `${host.name}+${partner.name} 质心`,
-    kind: 'star' as const,
-  }
-}
-
-/** T+ 读数：无单位时按模拟时间缩写，有单位时换算真实 天/年 */
-function fmtSimTime(t: number, units?: UnitProfile): string {
-  if (units) {
-    const days = t * units.timeDays
-    return days < 730 ? `${days.toFixed(0)} 天` : `${(days / 365.25).toFixed(2)} 年`
-  }
-  if (t < 1000) return t.toFixed(1)
-  if (t < 100000) return t.toFixed(0)
-  return t.toExponential(2)
-}
 
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -586,8 +545,7 @@ export default function Home() {
         const spd = Math.hypot(ship.vx, ship.vy)
         if (host) {
           const r = Math.hypot(ship.x - host.x, ship.y - host.y)
-          const mu = sim.config.G * host.mass
-          const esc = Math.sqrt((2 * mu) / r)
+          const esc = escapeSpeed(sim.config.G, host.mass, r)
           const rel = host.kind === 'blackhole' ? Math.sqrt(Math.max(0, 1 - host.radius / r)) : undefined
           setShipTel({ throttle: ship.thrust ?? 0, speed: spd, escRatio: spd / esc, altitude: r, host: host.name, dilation: rel })
         } else {
@@ -874,15 +832,8 @@ export default function Home() {
         const host = sim.dominantMassive(sp.sx, sp.sy)
         let svx = 0
         let svy = 0
-        if (host) {
-          const dx = sp.sx - host.x
-          const dy = sp.sy - host.y
-          const d = Math.hypot(dx, dy)
-          if (d > host.radius * 2) {
-            const v = Math.sqrt((sim.config.G * host.mass) / d)
-            svx = host.vx + (-dy / d) * v
-            svy = host.vy + (dx / d) * v
-          }
+        if (host && Math.hypot(sp.sx - host.x, sp.sy - host.y) > host.radius * 2) {
+          ;({ vx: svx, vy: svy } = circularOrbitVelocity(sim.config.G, host, sp.sx, sp.sy))
         }
         if (online) {
           net.send({ type: 'spawn', kind: 'ship', x: sp.sx, y: sp.sy, vx: svx, vy: svy, mass: 0.001 })
@@ -905,15 +856,8 @@ export default function Home() {
       const dragged = dragPx > 12
       if (cfg.autoOrbit && !dragged) {
         const host = sim.dominantMassive(sp.sx, sp.sy)
-        if (host) {
-          const dx = sp.sx - host.x
-          const dy = sp.sy - host.y
-          const d = Math.hypot(dx, dy)
-          if (d > host.radius * 2) {
-            const v = Math.sqrt((sim.config.G * host.mass) / d)
-            vx = host.vx + (-dy / d) * v
-            vy = host.vy + (dx / d) * v
-          }
+        if (host && Math.hypot(sp.sx - host.x, sp.sy - host.y) > host.radius * 2) {
+          ;({ vx, vy } = circularOrbitVelocity(sim.config.G, host, sp.sx, sp.sy))
         }
         // 无主星（空白宇宙）且无拖拽：静止放置
       }
