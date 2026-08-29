@@ -14,7 +14,7 @@ import SelectedCard from '../sections/SelectedCard'
 import ShipTelemetry from '../sections/ShipTelemetry'
 import StatsBar from '../sections/StatsBar'
 import { loadPrefs, savePrefs, type Prefs } from '../sim/prefs'
-import { exportSaveFile, importSaveFile } from '../sim/save'
+import { exportSaveFile, importSaveFile } from '../sim/saveFile'
 import { deleteSave, getAutosave, getSave, listSaves, putAutosave, putSave, type SaveMeta } from '../sim/saveStore'
 
 const V_SCALE = 0.022 // 拖拽距离 → 初速度

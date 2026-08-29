@@ -103,6 +103,9 @@ export class Simulation {
   /** 时间回退：周期快照（浅拷贝天体数组 + 深拷贝各天体轨迹头尾信息） */
   private snapshots: Array<{ simTime: number; merges: number; bodies: Array<Partial<Body> & { trail: TrailPoint[] }> }> = []
   private snapTimer = 0
+  /** 元数据变脏的天体 id：并合升级/超新星等原地改了 name/color/glow/kind，
+   *  二进制帧不带这些字段，服务器要靠它补发 manifest（否则客户端显示旧外观） */
+  readonly dirtyMeta = new Set<number>()
   config: SimConfig = {
     G: 1,
     timeScale: 30,
@@ -197,6 +200,8 @@ export class Simulation {
     visBoost?: number
     solid?: boolean
     trail?: boolean
+    /** 显式指定 id（联机镜像对账用：天体 id 必须与服务器一致，否则每帧被当未知体删除重建） */
+    id?: number
   }): Body {
     let color = partial.color
     let glow = partial.glow
@@ -224,7 +229,7 @@ export class Simulation {
       }
     }
     const body: Body = {
-      id: this.nextId++,
+      id: partial.id ?? this.nextId++,
       thrust: 0,
       thrustX: 0,
       thrustY: 1,
@@ -247,6 +252,8 @@ export class Simulation {
       trail: [],
       alive: true,
     }
+    // 显式 id（镜像对账）也不得与自增序列冲突：后续本地生成天体要绕开它
+    if (body.id >= this.nextId) this.nextId = body.id + 1
     this.bodies.push(body)
     return body
   }
@@ -338,10 +345,11 @@ export class Simulation {
     const dt = total / substeps
     this.subDt = dt
     for (let s = 0; s < substeps; s++) {
+      // 视界捕获在子步两端都检查：PW 势近视界发散，高速坠入者一个子步就能
+      // 跨过视界再被甩飞——只查端点会两次都错过（数值虫洞）。镜像不判定，等权威帧。
+      if (!this.mirror) this.captureHorizon()
       this.computeAccelerations()
       this.integrate(dt, zoom)
-      // 视界捕获必须在每个子步后检查：PW 势近视界发散，等到帧末再检查时
-      // 坠入者可能已被弹飞，永远错过捕获（数值虫洞）。镜像模式不判定，等权威帧。
       if (!this.mirror) this.captureHorizon()
       this.collideCheck(true)
     }
@@ -354,7 +362,7 @@ export class Simulation {
         for (const b of this.bodies) {
           if (b.kind === 'blackhole') continue
           const d = Math.hypot(b.x - bh.x, b.y - bh.y)
-          if (d < bh.radius * 1.5 && d > 1e-9) {
+          if (d < bh.radius * 3 && d > 1e-9) {
             const local = Math.sqrt((d * d * d) / (this.config.G * bh.mass)) / 100
             if (local < shieldDt) shieldDt = local
           }
@@ -365,6 +373,7 @@ export class Simulation {
         const extra = Math.min(Math.ceil(dt / subDt), perf.bhShieldMax)
         this.subDt = dt / extra
         for (let s = 0; s < extra; s++) {
+          this.captureHorizon()
           this.computeAccelerations()
           this.integrate(dt / extra, zoom)
           this.captureHorizon()
@@ -388,6 +397,7 @@ export class Simulation {
   clone(): Simulation {
     const c = new Simulation()
     c.config = { ...this.config }
+    c.perf = this.perf // 预演与观看必须同档：否则「极致」档的离线画面实际在跑均衡档
     c.simTime = this.simTime
     c.merges = this.merges
     c.nextId = this.nextId
@@ -422,7 +432,8 @@ export class Simulation {
     return Math.min(Math.max(need, base), cap)
   }
 
-  /** 保存当前状态快照（大星系场景跳过——轨迹数据量太大） */
+  /** 保存当前状态快照（大星系场景跳过）。轨迹不进快照——量大且回退后会自然重建，
+   *  服务器每个房间挂 160 份快照，带轨迹就是几十 MB */
   private saveSnapshot() {
     if (this.bodies.length > 60) return
     this.snapshots.push({
@@ -430,7 +441,7 @@ export class Simulation {
       merges: this.merges,
       bodies: this.bodies.map((b) => ({
         ...b,
-        trail: b.trail.slice(-400).map((p) => ({ ...p })),
+        trail: [] as TrailPoint[],
       })),
     })
     if (this.snapshots.length > 160) this.snapshots.shift()
@@ -848,11 +859,15 @@ export class Simulation {
             if (heat > 0.1) {
               this.addEffect(ctX, ctY, Math.sqrt(heat) * 0.5 + 3, '#fbbf24', 'merge')
             }
-            // 硬反弹溅碎片：动能足够大时从接触点崩出少量碎屑（非中心对称，撞击侧更多）
-            if (relV > vEsc * 0.7 && this.bodies.length < 1200) {
+            // 硬反弹溅碎片：动能足够大时从接触点崩出少量碎屑（非中心对称，撞击侧更多）。
+            // 质量从大天体扣除——碎屑不是凭空造出来的。
+            // 碎屑（asteroid）撞击不再溅新屑：否则碎屑回落砸中行星会级联雪崩
+            if (relV > vEsc * 0.7 && !smallIsFragment && this.bodies.length < 1200) {
               const nFrag = relV > vEsc * 1.1 ? 3 : 2
               const eject = Math.min(small.mass * 0.02, big.mass * 0.002)
               const mEach = eject / nFrag
+              big.mass -= eject
+              big.radius = radiusFor(big.kind, big.mass)
               for (let k = 0; k < nFrag; k++) {
                 // 碎片偏向弹回侧（撞击面反向）+ 切向散开
                 const back = Math.atan2(-ny, -nx) + (k - (nFrag - 1) / 2) * 0.7 + (Math.random() - 0.5) * 0.3
@@ -968,6 +983,7 @@ export class Simulation {
     // —— 黑洞优先级最高：并合任一方是黑洞，结果必为黑洞（恒星质量再大也只是坠进去）——
     if (a.kind !== 'blackhole' && b.kind === 'blackhole') {
       a.kind = 'blackhole'
+      this.dirtyMeta.add(a.id)
       a.name = `黑洞 Ω-${++this.counters.blackhole}`
       a.lifeStage = 'blackhole'
       a.color = '#05030c'
@@ -991,6 +1007,7 @@ export class Simulation {
     if (a.kind === 'asteroid' || a.kind === 'moon' || a.kind === 'planet') {
       const promoted = kindForMass(a.mass)
       if (promoted !== a.kind) {
+        this.dirtyMeta.add(a.id)
         a.kind = promoted
         this.counters[promoted]++
         if (promoted === 'star') {
@@ -1061,7 +1078,9 @@ export class Simulation {
     a.lifeStage = st.stage
     if (st.stage === 'blackhole') {
       // 超新星塌缩
+      this.dirtyMeta.add(a.id)
       a.kind = 'blackhole'
+      this.dirtyMeta.add(a.id)
       a.name = `黑洞 Ω-${++this.counters.blackhole}`
       a.color = st.color
       a.glow = st.glow
@@ -1071,6 +1090,7 @@ export class Simulation {
     }
     if (st.stage !== prev) {
       // 阶段跃迁（红巨星/白矮星）：半径与颜色变化 + 爆发闪光
+      this.dirtyMeta.add(a.id)
       a.color = st.color
       a.glow = st.glow
       a.radius = Math.max(radiusFor('star', a.mass) * st.radiusFactor, a.radius * (st.stage === 'giant' ? 1.6 : 1))

@@ -144,6 +144,11 @@ export function draw(
       if (!cached || now - cached.t > 120) {
         cached = { t: now, path: predictShipPath(sim, b) }
         predictCache.set(b.id, cached)
+        // 缓存淘汰：只留最近的 8 艘船，防止删船后条目泄漏
+        if (predictCache.size > 8) {
+          const oldest = [...predictCache.entries()].sort((a, b2) => a[1].t - b2[1].t)[0]
+          predictCache.delete(oldest[0])
+        }
       }
       path = cached.path
     }
@@ -177,38 +182,11 @@ export function draw(
       ctx.stroke()
       ctx.setLineDash([])
     }
+  }
 
   // —— 紧密双星质心标记：两颗大质量天体（恒星/黑洞）靠得近时，画它们的公共质心 ——
   // 轨道根数与直觉都以质心为准；互绕的双星/双黑洞会看到质心几乎不动
-  {
-    const massive = sim.bodies.filter((b) => b.alive && (b.kind === 'star' || b.kind === 'blackhole') && b.mass >= 200)
-    let drawn = 0
-    for (let i = 0; i < massive.length && drawn < 4; i++) {
-      const a = massive[i]
-      for (let j = i + 1; j < massive.length && drawn < 4; j++) {
-        const b = massive[j]
-        const d = Math.hypot(b.x - a.x, b.y - a.y)
-        // 紧密：间距与两者半径同量级（互绕系统），且明显互相绕转（间距小于 12 倍半径和）
-        if (d > (a.radius + b.radius) * 12 || d < 1e-6) continue
-        const M = a.mass + b.mass
-        const cx = (a.x * a.mass + b.x * b.mass) / M
-        const cy = (a.y * a.mass + b.y * b.mass) / M
-        const r = 7 / cam.zoom // 屏幕上恒定 7px
-        ctx.strokeStyle = 'rgba(219,228,243,0.55)'
-        ctx.lineWidth = 1 / cam.zoom
-        ctx.beginPath()
-        ctx.arc(cx, cy, r, 0, Math.PI * 2)
-        ctx.moveTo(cx - r * 1.6, cy)
-        ctx.lineTo(cx + r * 1.6, cy)
-        ctx.moveTo(cx, cy - r * 1.6)
-        ctx.lineTo(cx, cy + r * 1.6)
-        ctx.stroke()
-        drawn++
-        break
-      }
-    }
-  }
-  }
+  drawBarycenters(ctx, sim, cam.zoom)
 
   // —— 碰撞 / 生成特效 ——
   for (const e of sim.effects) {
@@ -529,6 +507,36 @@ export function predictShipPath(sim: Simulation, ship: Body, maxSteps = 1400): A
     }
   }
   return pts.length > 6 ? pts : null
+}
+
+/** 紧密双星/双黑洞的公共质心标记（画在星体层之后，不被辉光盖住） */
+function drawBarycenters(ctx: CanvasRenderingContext2D, sim: Simulation, zoom: number) {
+  const massive = sim.bodies.filter((b) => b.alive && (b.kind === 'star' || b.kind === 'blackhole') && b.mass >= 200)
+  let drawn = 0
+  for (let i = 0; i < massive.length && drawn < 4; i++) {
+    const a = massive[i]
+    for (let j = i + 1; j < massive.length && drawn < 4; j++) {
+      const b = massive[j]
+      const d = Math.hypot(b.x - a.x, b.y - a.y)
+      // 紧密：间距与两者半径同量级（互绕系统），间距小于 12 倍半径和
+      if (d > (a.radius + b.radius) * 12 || d < 1e-6) continue
+      const M = a.mass + b.mass
+      const cx = (a.x * a.mass + b.x * b.mass) / M
+      const cy = (a.y * a.mass + b.y * b.mass) / M
+      const r = 7 / zoom // 屏幕上恒定 7px
+      ctx.strokeStyle = 'rgba(219,228,243,0.55)'
+      ctx.lineWidth = 1 / zoom
+      ctx.beginPath()
+      ctx.arc(cx, cy, r, 0, Math.PI * 2)
+      ctx.moveTo(cx - r * 1.6, cy)
+      ctx.lineTo(cx + r * 1.6, cy)
+      ctx.moveTo(cx, cy - r * 1.6)
+      ctx.lineTo(cx, cy + r * 1.6)
+      ctx.stroke()
+      drawn++
+      break
+    }
+  }
 }
 
 function drawBody(ctx: CanvasRenderingContext2D, b: Body, zoom: number, now: number, sim: Simulation) {

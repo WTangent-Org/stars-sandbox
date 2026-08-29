@@ -15,7 +15,12 @@ import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer, WebSocket } from 'ws'
 import { Simulation } from '../src/sim/engine'
-import { loadPreset } from '../src/sim/presets'
+import { loadPreset, PRESETS } from '../src/sim/presets'
+import { validateWorldState } from '../src/sim/save'
+import type { BodyKind } from '../src/sim/types'
+
+const PRESET_IDS = PRESETS.map((p) => p.id) as string[]
+const PRESET_KINDS: BodyKind[] = ['star', 'planet', 'moon', 'asteroid', 'blackhole']
 import {
   encodeFrame,
   KIND_CODE,
@@ -101,6 +106,8 @@ interface Room {
   vote: Vote | null
   physicsTimer: ReturnType<typeof setInterval> | null
   streamTimer: ReturnType<typeof setInterval> | null
+  /** 每玩家生成时间戳（限速用） */
+  spawnTimes: Map<string, number[]>
 }
 
 const rooms = new Map<string, Room>()
@@ -126,6 +133,7 @@ function getRoom(id: string): Room {
       vote: null,
       physicsTimer: null,
       streamTimer: null,
+      spawnTimes: new Map(),
     }
     rooms.set(id, r)
   }
@@ -217,16 +225,19 @@ function startRoomLoops(room: Room) {
           trailsForever: sim.config.trailsForever,
         },
       })
-      // 新天体清单（含 owner）增量下发
+      // 新天体清单（含 owner）增量下发 + 原地变身天体的元数据重发（超新星/升级不改 id）
       for (const p of room.players.values()) {
         const known = knownMap.get(p.ws)
         if (!known) continue
         const fresh = sim.bodies.filter((b) => !known.has(b.id))
-        if (fresh.length === 0) continue
+        const dirty = [...sim.dirtyMeta].map((id) => sim.bodies.find((b) => b.id === id)).filter((b) => b != null)
+        if (fresh.length === 0 && dirty.length === 0) continue
         for (const b of fresh) known.add(b.id)
+        for (const b of dirty) known.add(b.id)
+        sim.dirtyMeta.clear()
         const alive = new Set(sim.bodies.map((b) => b.id))
         for (const id of known) if (!alive.has(id)) known.delete(id)
-        send(p.ws, { type: 'manifest', bodies: fresh.map((b) => manifestBody(room, b)) })
+        send(p.ws, { type: 'manifest', bodies: [...fresh, ...dirty].map((b) => manifestBody(room, b)) })
       }
     }
     // 投票结算
@@ -389,19 +400,54 @@ function globalOpMode(room: Room, p: Player): 'direct' | 'vote' | 'denied' {
   return room.hostId === p.id ? 'direct' : 'denied'
 }
 
+// ———— 客户端输入校验 ————
+/** 有限数且在范围内；联机的权威物理不能吃 NaN/1e308——一个坏值会永久污染整房模拟 */
+function finiteIn(v: unknown, min: number, max: number): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
+}
+/** config patch 白名单：客户端只允许改这几项，且必须在值域内（paused/G/timeScale 是全局操作，另有权限门） */
+const CONFIG_LIMITS: Record<string, [number, number]> = {
+  timeScale: [0, 5000],
+  G: [0, 100],
+  softening: [0, 1000],
+}
+/** 每玩家生成限速：10 秒内最多 40 次（防刷屏拖垮 O(n²)） */
+const SPAWN_BUDGET = { windowMs: 10_000, max: 40 }
+
+function checkSpawnBudget(room: Room, p: Player): boolean {
+  const now = Date.now()
+  let t = room.spawnTimes.get(p.id)
+  if (!t) {
+    t = []
+    room.spawnTimes.set(p.id, t)
+  }
+  while (t.length > 0 && now - t[0] > SPAWN_BUDGET.windowMs) t.shift()
+  if (t.length >= SPAWN_BUDGET.max) return false
+  t.push(now)
+  return true
+}
+
 function applyCmd(room: Room, p: Player, cmd: ClientCmd) {
   const sim = room.sim
   switch (cmd.type) {
     case 'config': {
-      // timeScale 影响全房节奏，归房主管；其余配置（渲染层行为）不设限
-      if ('timeScale' in (cmd.patch ?? {}) && globalOpMode(room, p) === 'denied') break
-      Object.assign(sim.config, cmd.patch)
+      // 白名单 + 值域过滤；timeScale 影响全房节奏，额外归房主管
+      const patch = cmd.patch ?? {}
+      const clean: Record<string, number | boolean> = {}
+      for (const [k, v] of Object.entries(patch)) {
+        const lim = CONFIG_LIMITS[k]
+        if (!lim) continue
+        if (!finiteIn(v, lim[0], lim[1])) continue
+        if (k === 'timeScale' && globalOpMode(room, p) === 'denied') continue
+        clean[k] = v
+      }
+      Object.assign(sim.config, clean)
       break
     }
     case 'preset': {
       const mode = globalOpMode(room, p)
       if (mode === 'denied') break
-      if (!cmd.id) break
+      if (!cmd.id || !PRESET_IDS.includes(cmd.id as never)) break
       if (mode === 'direct') {
         executeVote(room, { id: 0, action: 'preset', preset: cmd.id, initiator: p.id, votes: new Map(), deadline: 0 })
       } else {
@@ -412,9 +458,15 @@ function applyCmd(room: Room, p: Player, cmd: ClientCmd) {
     case 'spawn': {
       // 飞船：每人一艘，由服务器统一分配；客户端点选的坐标/速度直接采用
       if (cmd.kind === 'ship') {
+        if (!finiteIn(cmd.x, -1e7, 1e7) || !finiteIn(cmd.y, -1e7, 1e7) || !finiteIn(cmd.vx, -1e4, 1e4) || !finiteIn(cmd.vy, -1e4, 1e4)) break
         spawnShip(room, p, { x: cmd.x, y: cmd.y, vx: cmd.vx, vy: cmd.vy })
         break
       }
+      if (!finiteIn(cmd.x, -1e7, 1e7) || !finiteIn(cmd.y, -1e7, 1e7) || !finiteIn(cmd.vx, -1e4, 1e4) || !finiteIn(cmd.vy, -1e4, 1e4)) break
+      if (!finiteIn(cmd.mass, 1e-6, 2e6)) break
+      if (!PRESET_KINDS.includes(cmd.kind as never)) break
+      if (!checkSpawnBudget(room, p)) break
+      if (sim.bodies.length >= 2500) break // 全房总量保险丝（与引擎碎片保险丝一致）
       const b = sim.addBody({
         kind: cmd.kind,
         x: cmd.x,
@@ -429,6 +481,7 @@ function applyCmd(room: Room, p: Player, cmd: ClientCmd) {
     }
     case 'thrust': {
       // 只能推自己的飞船
+      if (!finiteIn(cmd.throttle, 0, 1) || !finiteIn(cmd.x, -1, 1) || !finiteIn(cmd.y, -1, 1)) break
       const ship = sim.bodies.find((b) => b.id === p.shipId && b.alive)
       if (ship) {
         ship.thrust = cmd.throttle
@@ -440,6 +493,7 @@ function applyCmd(room: Room, p: Player, cmd: ClientCmd) {
     case 'grab':
     case 'drag': {
       if (!canMove(room, p.id, cmd.id)) break
+      if (cmd.type === 'drag' && (!finiteIn(cmd.x, -1e7, 1e7) || !finiteIn(cmd.y, -1e7, 1e7))) break
       const b = sim.bodies.find((x) => x.id === cmd.id)
       if (b) {
         b.held = true
@@ -454,6 +508,7 @@ function applyCmd(room: Room, p: Player, cmd: ClientCmd) {
     }
     case 'release': {
       if (!canMove(room, p.id, cmd.id)) break
+      if (!finiteIn(cmd.vx, -1e4, 1e4) || !finiteIn(cmd.vy, -1e4, 1e4)) break
       const b = sim.bodies.find((x) => x.id === cmd.id)
       if (b) {
         b.held = false
@@ -530,13 +585,14 @@ function applyCmd(room: Room, p: Player, cmd: ClientCmd) {
     case 'hostsave': {
       // 开放到局域网：把上传的世界状态装进目标房间（省略房号 = 新建随机房），
       // 自己移入该房并成为房主（MC 语义：房主走，房没）。等价于「用存档开服」。
+      // 只允许新房或无人房间——不能接管别人正在玩的房间
       const state = cmd.state
-      if (!state || state.version !== 1 || !Array.isArray(state.bodies) || state.bodies.length > 5000) break
+      if (!validateWorldState(state)) break
       const requested = (cmd.room ?? '').trim().slice(0, 24)
       const roomId = requested && requested !== 'lobby' ? requested : `w-${randomUUID().slice(0, 6)}` // 防呆：大厅不可被接管
       const existing = rooms.get(roomId)
-      if (existing && existing !== room && existing.players.size >= MAX_PER_ROOM) {
-        send(p.ws, { type: 'hosted', room: '' }) // 目标房已满
+      if (existing && existing.players.size > 0 && existing !== room) {
+        send(p.ws, { type: 'hosted', room: '' }) // 目标房有人，拒绝接管
         break
       }
       leaveRoom(p.ws)
@@ -616,10 +672,13 @@ function leaveRoom(ws: WebSocket) {
   if (!room) return
   const p = room.players.get(ws)
   if (p) {
-    // 收回飞船；他创造的星球保留但失去主人（变成只读）
+    // 收回飞船；他正拖着的天体松手（否则 held 天体永远冻结）；他创造的星球保留但失去主人（变成只读）
     if (p.shipId != null) {
       room.sim.removeBody(p.shipId)
       room.owners.delete(p.shipId)
+    }
+    for (const b of room.sim.bodies) {
+      if (room.owners.get(b.id) === p.id) b.held = false
     }
     // 他参与的投票票作废
     room.vote?.votes.delete(p.id)
@@ -678,9 +737,10 @@ const http = createServer((req, res) => {
     })
 })
 
-const wss = new WebSocketServer({ server: http, path: '/ws' })
+const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: 2 * 1024 * 1024 })
 
 wss.on('connection', (ws) => {
+  ws.on('error', () => leaveRoom(ws)) // socket 级错误（含 maxPayload 超限）按断线处理，不能让进程崩
   ws.on('message', (raw) => {
     let cmd: ClientCmd
     try {
@@ -688,6 +748,8 @@ wss.on('connection', (ws) => {
     } catch {
       return
     }
+    // "null"/"42"/字符串都能过 JSON.parse——没有对象形状就丢弃，否则下方取属性直接崩进程
+    if (!cmd || typeof cmd !== 'object' || typeof cmd.type !== 'string') return
     if (cmd.type === 'join') {
       const roomId = (cmd.room ?? 'lobby').trim().slice(0, 24) || 'lobby'
       joinRoom(ws, roomId)

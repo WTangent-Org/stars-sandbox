@@ -9,7 +9,8 @@
     "server": "tsx server/index.ts",
     "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist-server/server.js",
     "start": "node dist/boot.js",
-    "start:kimi": "node dist/boot.js",
+    "test": "tsx --test tests/*.test.ts",
+    "smoke": "node scripts/e2e-smoke.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

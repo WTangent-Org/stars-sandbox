@@ -286,6 +286,7 @@ export class NetSim {
       const meta = this.manifest.get(fb.id)
       if (!b) {
         b = this.mirror.addBody({
+          id: fb.id, // 必须用服务器 id：本地自增 id 会让帧对账把它当未知体每帧删除重建
           kind,
           x: fb.x,
           y: fb.y,
