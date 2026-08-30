@@ -380,19 +380,6 @@ export default function Home() {
           room={net.room}
           saveMsg={saveMsg}
           onResume={() => setMenuOpen(false)}
-          onSave={() => void onSaveCurrent()}
-          onHostLan={async () => {
-            if (!rt.onlineRef.current) {
-              showSaveMsg('离线状态无法开放，请先连接服务器（主菜单 · 多人游戏）')
-              return
-            }
-            try {
-              const state = await net.requestState()
-              net.hostSave(state)
-            } catch (e) {
-              showSaveMsg(`开放失败：${e instanceof Error ? e.message : String(e)}`)
-            }
-          }}
           onExitToMenu={() => void exitToMenu()}
         />
       )}

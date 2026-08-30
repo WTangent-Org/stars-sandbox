@@ -10,9 +10,8 @@
  * 飞船由本地即时控制，对账只做软纠正。
  */
 import { Simulation } from './engine'
-import { PERF_TIERS, type BodyKind, type WorldState } from './types'
 import { decodeFrame, KIND_CODE, type BodyPerm, type ClientCmd, type PlayerInfo, type RoomListMsg, type ServerMsg, type VoteMsg } from '../shared/protocol'
-import { recordTrail, ageEffects } from './trail'
+import type { BodyKind, WorldState } from './types'
 
 export type NetStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
@@ -60,10 +59,6 @@ export class NetSim {
   private manifest = new Map<number, { name: string; kind: BodyKind; color: string; glow: string; solid: boolean; visBoost?: number; owner?: string | null }>()
   /** 未渲染的特效（服务器推来，本地按真实时间老化） */
   private pendingEffects: Array<{ x: number; y: number; age: number; ttl: number; size: number; color: string; kind: 'merge' | 'spawn' }> = []
-  /** 帧插值（降级路径）：上一帧/当前帧天体位置 */
-  private prev = new Map<number, { x: number; y: number }>()
-  private curr = new Map<number, { x: number; y: number }>()
-  private recvAt = 0
   private tickMs = 83
   private stateResolvers: Array<{ res: (s: WorldState) => void; rej: (e: Error) => void; timer: ReturnType<typeof setTimeout> }> = []
 
@@ -177,22 +172,13 @@ export class NetSim {
     this.send({ type: 'listrooms' })
   }
 
-  /** 客户端补算是否启用：低/省电档退回线性插值 */
-  get reSimEnabled(): boolean {
-    return this.mirror.perf !== PERF_TIERS.low && this.mirror.perf !== PERF_TIERS.saver
-  }
-
-  /** 每个渲染帧调用：补算模式本地积分（step 内含特效老化），否则走插值降级 */
+  /** 每个渲染帧调用：镜像本地积分（低/省电档由引擎自动减少子步，无需单独插值路径） */
   tick(dt: number, zoom: number) {
     if (this.pendingEffects.length > 0) {
       this.mirror.effects.push(...this.pendingEffects)
       this.pendingEffects.length = 0
     }
-    if (this.reSimEnabled) {
-      this.mirror.step(dt, zoom)
-    } else {
-      this.interpolate(zoom)
-    }
+    this.mirror.step(dt, zoom)
   }
 
   private onJson(msg: ServerMsg) {
@@ -284,17 +270,12 @@ export class NetSim {
   /** 权威帧到达：对账纠偏。本地控制中的天体（抓取/自己的飞船）只做软纠正。 */
   private onFrame(buf: ArrayBuffer) {
     const f = decodeFrame(buf)
-    this.recvAt = performance.now()
     this.simTime = f.simTime
     this.merges = f.merges
-    // 插值缓冲滚动（降级路径用）
-    this.prev = this.curr
-    this.curr = new Map()
     const seen = new Set<number>()
     for (const fb of f.bodies) {
       seen.add(fb.id)
       const kind = KIND_CODE[fb.kind] ?? 'asteroid'
-      this.curr.set(fb.id, { x: fb.x, y: fb.y })
       let b = this.mirror.bodies.find((x) => x.id === fb.id)
       const meta = this.manifest.get(fb.id)
       if (!b) {
@@ -349,29 +330,5 @@ export class NetSim {
     this.mirror.bodies = this.mirror.bodies.filter((b) => seen.has(b.id))
     this.mirror.simTime = f.simTime
     this.mirror.merges = f.merges
-  }
-
-  private lastInterpolate = 0
-
-  /** 降级路径（低/省电档）：20Hz 网络帧线性插值 + 本地轨迹/特效维护 */
-  private interpolate(zoom = 1) {
-    const now = performance.now()
-    const span = Math.max(this.tickMs, 30)
-    const alpha = Math.min(Math.max((now - this.recvAt) / span, 0), 1.5) // 允许轻微外推
-    for (const b of this.mirror.bodies) {
-      if (!b.held) {
-        const c = this.curr.get(b.id)
-        const p = this.prev.get(b.id)
-        if (c && p) {
-          b.x = p.x + (c.x - p.x) * alpha
-          b.y = p.y + (c.y - p.y) * alpha
-        }
-      }
-      // 轨迹：本地追加（网络帧不携带轨迹）；与引擎同一套采样/裁剪规则
-      recordTrail(this.mirror.config, b, b.x, b.y, zoom, this.mirror.bodies.length)
-    }
-    const dt = this.lastInterpolate ? (now - this.lastInterpolate) / 1000 : 0
-    this.lastInterpolate = now
-    this.mirror.effects = ageEffects(this.mirror.effects, dt)
   }
 }

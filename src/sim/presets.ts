@@ -214,9 +214,50 @@ function pickTracer(r: number): [string, string] {
   return [TRACER_STARS[0][0], TRACER_STARS[0][1]]
 }
 
+
+/** 旋涡星系生成器：中心黑洞 + 示踪恒星盘（无碰撞系统）。galaxy / collision 两个预设共用 */
+function makeTracerGalaxy(
+  sim: Simulation,
+  opts: { cx: number; cy: number; vx: number; vy: number; tilt: number; coreMass: number; coreName: string; radius: number; count: number; seed: { v: number }; squash?: number; spiral: number },
+) {
+  const { squash = 1 } = opts
+  const bh = sim.addBody({ kind: 'blackhole', x: opts.cx, y: opts.cy, vx: opts.vx, vy: opts.vy, mass: opts.coreMass, name: opts.coreName })
+  const rs = bh.radius
+  for (let i = 0; i < opts.count; i++) {
+    const t = rand(opts.seed)
+    const r = opts.radius * 0.12 + opts.radius * Math.pow(t, 0.8)
+    const arm = i % 2
+    const theta = r * opts.spiral + arm * Math.PI + (rand(opts.seed) - 0.5) * 0.7
+    const lx = Math.cos(theta) * r
+    const ly = Math.sin(theta) * r * squash
+    const x = opts.cx + lx * Math.cos(opts.tilt) - ly * Math.sin(opts.tilt)
+    const y = opts.cy + lx * Math.sin(opts.tilt) + ly * Math.cos(opts.tilt)
+    // PW 势下的圆轨道速度：v = sqrt(GM/r) · r/(r−r_s)，相对论开时内侧引力更强
+    const v = Math.sqrt((G * opts.coreMass) / r) * (r / Math.max(r - rs, r * 0.2))
+    const lvx = -Math.sin(theta) * v
+    const lvy = Math.cos(theta) * v * squash
+    const mass = 0.4 + rand(opts.seed) * rand(opts.seed) * 3
+    const [color, glow] = pickTracer(rand(opts.seed))
+    sim.addBody({
+      kind: 'star',
+      x,
+      y,
+      vx: opts.vx + lvx * Math.cos(opts.tilt) - lvy * Math.sin(opts.tilt),
+      vy: opts.vy + lvx * Math.sin(opts.tilt) + lvy * Math.cos(opts.tilt),
+      mass,
+      color,
+      glow,
+      radius: 1.8 + rand(opts.seed) * 1.6,
+      solid: false,
+    })
+  }
+}
+
+/** 所有预设统一 G=1（真实太阳系预设自行覆盖为 G_REAL） */
+const G = 1
+
 export function loadPreset(sim: Simulation, id: PresetId): { zoom: number; units?: UnitProfile } {
   sim.reset()
-  const G = 1
   sim.config.G = G
   sim.config.softening = 3
 
@@ -337,28 +378,22 @@ export function loadPreset(sim: Simulation, id: PresetId): { zoom: number; units
 
     case 'galaxy': {
       const seed = { v: 42 }
-      const MBH = 20000
-      sim.addBody({ kind: 'blackhole', x: 0, y: 0, mass: MBH, name: '超大质量黑洞 · 银心' })
+      sim.addBody({ kind: 'blackhole', x: 0, y: 0, mass: 20000, name: '超大质量黑洞 · 银心' })
       // 示踪恒星：轻质量 + 非实体（真实星系是无碰撞系统，恒星不会互相撞上）
-      const N = 550
-      for (let i = 0; i < N; i++) {
+      for (let i = 0; i < 550; i++) {
         const t = rand(seed)
         const r = 110 + 570 * Math.pow(t, 0.75)
         const arm = i % 2
         const theta = r * 0.016 + arm * Math.PI + (rand(seed) - 0.5) * (0.35 + 70 / r)
-        const x = Math.cos(theta) * r + (rand(seed) - 0.5) * 10
-        const y = Math.sin(theta) * r + (rand(seed) - 0.5) * 10
-        const v = Math.sqrt((G * MBH) / r) * 1.02
-        const jx = (rand(seed) - 0.5) * v * 0.12
-        const jy = (rand(seed) - 0.5) * v * 0.12
+        const v = Math.sqrt((G * 20000) / r) * 1.02
         const mass = 0.4 + rand(seed) * rand(seed) * 4
         const [color, glow] = pickTracer(rand(seed))
         sim.addBody({
           kind: 'star',
-          x,
-          y,
-          vx: -Math.sin(theta) * v + jx,
-          vy: Math.cos(theta) * v + jy,
+          x: Math.cos(theta) * r + (rand(seed) - 0.5) * 10,
+          y: Math.sin(theta) * r + (rand(seed) - 0.5) * 10,
+          vx: -Math.sin(theta) * v,
+          vy: Math.cos(theta) * v,
           mass,
           color,
           glow,
@@ -374,44 +409,9 @@ export function loadPreset(sim: Simulation, id: PresetId): { zoom: number; units
 
     case 'collision': {
       const seed = { v: 7 }
-      const makeGalaxy = (cx: number, cy: number, bvx: number, bvy: number, tilt: number, tag: string) => {
-        const M = 5200
-        const bh = sim.addBody({ kind: 'blackhole', x: cx, y: cy, vx: bvx, vy: bvy, mass: M, name: `星系核 · ${tag}` })
-        const rs = bh.radius
-        const N = 130
-        for (let i = 0; i < N; i++) {
-          const t = rand(seed)
-          const r = 26 + 190 * Math.pow(t, 0.8)
-          const arm = i % 2
-          const theta = r * 0.045 + arm * Math.PI + (rand(seed) - 0.5) * 0.7
-          const lx = Math.cos(theta) * r
-          const ly = Math.sin(theta) * r * 0.55
-          const x = cx + lx * Math.cos(tilt) - ly * Math.sin(tilt)
-          const y = cy + lx * Math.sin(tilt) + ly * Math.cos(tilt)
-          // PW 势下的圆轨道速度：v = sqrt(GM/r) · r/(r−r_s)，相对论开时内侧引力更强
-          const v = Math.sqrt((G * M) / r) * (r / Math.max(r - rs, r * 0.2))
-          const lvx = -Math.sin(theta) * v
-          const lvy = Math.cos(theta) * v * 0.55
-          const mass = 0.4 + rand(seed) * rand(seed) * 3
-          const [color, glow] = pickTracer(rand(seed))
-          sim.addBody({
-            kind: 'star',
-            x,
-            y,
-            vx: bvx + lvx * Math.cos(tilt) - lvy * Math.sin(tilt),
-            vy: bvy + lvx * Math.sin(tilt) + lvy * Math.cos(tilt),
-            mass,
-            color,
-            glow,
-            radius: 1.8 + rand(seed) * 1.4,
-            solid: false,
-          })
-        }
-      }
-      // 非对心相遇：约 700 的碰撞参数，先掠飞、拉出潮汐尾，再回旋并合——
-      // 之前几乎正撞，双核 10 秒内直接合并，没有「对决」过程
-      makeGalaxy(-560, -40, 0.75, 0.7, 0.5, '阿贝尔-A')
-      makeGalaxy(560, 40, -0.75, -0.7, -0.9, '阿贝尔-B')
+      // 非对心相遇：约 700 的碰撞参数，先掠飞、拉出潮汐尾，再回旋并合
+      makeTracerGalaxy(sim, { cx: -560, cy: -40, vx: 0.75, vy: 0.7, tilt: 0.5, coreMass: 5200, coreName: '星系核 · 阿贝尔-A', radius: 216, count: 130, seed, spiral: 0.045 })
+      makeTracerGalaxy(sim, { cx: 560, cy: 40, vx: -0.75, vy: -0.7, tilt: -0.9, coreMass: 5200, coreName: '星系核 · 阿贝尔-B', radius: 216, count: 130, seed, spiral: 0.045, squash: 0.55 })
       sim.config.timeScale = 50
       sim.config.softening = 20
       sim.config.trails = false

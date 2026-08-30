@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { PRESETS } from '../sim/presets'
 import type { PresetId } from '../sim/types'
 import type { SaveMeta } from '../sim/saveStore'
+import ModeList from './ModeList'
 
 /** 自动存档摘要（主菜单「继续游戏」副标题） */
 export interface AutosaveInfo {
@@ -109,40 +110,8 @@ export default function MainMenu(p: Props) {
                 还没有本地世界。游戏内会每 30 秒自动保存；也可以在游戏菜单里手动保存。
               </p>
             ) : (
-              <div className="mg-scroll max-h-[46vh] space-y-1.5 overflow-y-auto pr-1">
-                {p.saves.map((s) => (
-                  <div key={s.id} className="rounded border border-[#1a2540] px-2.5 py-2">
-                    <div className="flex items-center justify-between">
-                      <span className="truncate text-[12.5px] text-[#dbe4f3]/90">{s.name}</span>
-                      <span className="ml-2 shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">
-                        {new Date(s.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 font-mono text-[9px] text-[#5b6b8c]/50">
-                      {s.bodies} 天体{s.preset ? ` · ${PRESETS.find((pr) => pr.id === s.preset)?.label ?? s.preset}` : ''}
-                    </div>
-                    <div className="mt-1.5 flex gap-1.5">
-                      <button
-                        onClick={() => p.onLoadSave(s.id)}
-                        className="flex-1 rounded border border-[#22d3ee]/40 px-1.5 py-1 text-[10.5px] text-[#22d3ee] hover:bg-[#22d3ee]/10"
-                      >
-                        进入世界
-                      </button>
-                      <button
-                        onClick={() => p.onExportSave(s.id)}
-                        className="flex-1 rounded border border-[#1a2540] px-1.5 py-1 text-[10.5px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35"
-                      >
-                        导出
-                      </button>
-                      <button
-                        onClick={() => p.onDeleteSave(s.id)}
-                        className="flex-1 rounded border border-[#f87171]/25 px-1.5 py-1 text-[10.5px] text-[#f87171]/80 hover:border-[#f87171]/50"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              <div className="mg-scroll max-h-[46vh] overflow-y-auto pr-1">
+                <ModeList rooms={[]} saves={p.saves} onLoadSave={p.onLoadSave} onDeleteSave={p.onDeleteSave} onExportSave={p.onExportSave} onJoinRoom={() => {}} />
               </div>
             )}
           </div>
