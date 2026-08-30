@@ -11,7 +11,7 @@
  */
 import { Simulation } from './engine'
 import { PERF_TIERS, type BodyKind, type WorldState } from './types'
-import { decodeFrame, KIND_CODE, type BodyPerm, type ClientCmd, type PlayerInfo, type ServerMsg, type VoteMsg } from '../shared/protocol'
+import { decodeFrame, KIND_CODE, type BodyPerm, type ClientCmd, type PlayerInfo, type RoomListMsg, type ServerMsg, type VoteMsg } from '../shared/protocol'
 import { recordTrail, ageEffects } from './trail'
 
 export type NetStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -51,6 +51,9 @@ export class NetSim {
   onHosted: ((room: string) => void) | null = null
   /** 房主解散房间（房主退出或主动关闭）：客户端回到离线单机 */
   onRoomClosed: ((reason: 'host_left' | 'host_closed') => void) | null = null
+  /** 活跃房间列表（requestRoomList 应答） */
+  roomList: Array<{ id: string; players: number; host: boolean }> = []
+  onRoomList: ((rooms: RoomListMsg['rooms']) => void) | null = null
   private ws: WebSocket | null = null
   /** 已通知渲染层的预设（去重：同一预设只回调一次，重连后重置） */
   private firedPreset = ''
@@ -169,6 +172,11 @@ export class NetSim {
     this.send({ type: 'closeRoom' })
   }
 
+  /** 请求活跃房间列表（结果经 onRoomList 回调） */
+  requestRoomList() {
+    this.send({ type: 'listrooms' })
+  }
+
   /** 客户端补算是否启用：低/省电档退回线性插值 */
   get reSimEnabled(): boolean {
     return this.mirror.perf !== PERF_TIERS.low && this.mirror.perf !== PERF_TIERS.saver
@@ -252,6 +260,10 @@ export class NetSim {
       }
       case 'hosted':
         this.onHosted?.(msg.room)
+        break
+      case 'roomlist':
+        this.roomList = msg.rooms
+        this.onRoomList?.(msg.rooms)
         break
       case 'roomClosed':
         // 房主走，房没：本地清空联机状态回到离线单机

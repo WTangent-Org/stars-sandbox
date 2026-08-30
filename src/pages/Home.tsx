@@ -68,7 +68,7 @@ export default function Home() {
   const { screen, setScreen, menuOpen, setMenuOpen, startLocalWorld, joinMultiplayer, exitToMenu, loadSaveFromMenu } = menu
 
   // —— 联机房间接线 ——
-  useNetRoom({ rt, netStatus, selectedId, setNetStatus, bumpLobby, showSaveMsg, rerender, setUnits, setCurrentPreset, setSelectedId, setFollow })
+  const { joinRoomId, hostNewRoom, roomList, refreshRooms } = useNetRoom({ rt, netStatus, selectedId, setNetStatus, bumpLobby, showSaveMsg, rerender, setUnits, setCurrentPreset, setSelectedId, setFollow })
   
   // —— 世界级操作 ——
   const [warp, setWarp] = useState(1)
@@ -197,6 +197,11 @@ export default function Home() {
               onDeleteSave={(id) => void onDeleteSave(id)}
               onExportSave={(id) => void onExportSave(id)}
               onImportSave={() => void onImportSave()}
+              lastRoom={prefs.roomCode || undefined}
+              roomList={roomList}
+              onJoinRoom={joinRoomId}
+              onNewRoom={hostNewRoom}
+              onRefreshRooms={refreshRooms}
             />
           </div>
 
@@ -398,6 +403,10 @@ export default function Home() {
           autosave={autosaveInfo}
           saves={saves}
           lastRoom={prefs.roomCode || undefined}
+          onNewRoom={() => {
+            hostNewRoom()
+            setScreen('game')
+          }}
           onContinue={() => setScreen('game')}
           onNewWorld={startLocalWorld}
           onLoadSave={(id) => void loadSaveFromMenu(id)}

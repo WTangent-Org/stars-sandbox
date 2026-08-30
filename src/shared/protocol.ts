@@ -121,6 +121,7 @@ export type ServerMsg =
   | WorldStateMsg
   | HostedMsg
   | RoomClosedMsg
+  | RoomListMsg
 
 /** 服务端 → 客户端：世界状态应答（存档「保存当前」用，权威快照） */
 export interface WorldStateMsg {
@@ -133,6 +134,12 @@ export interface HostedMsg {
   type: 'hosted'
   /** 目标房间号；'' = 失败（房间满等） */
   room: string
+}
+
+/** 服务端 → 客户端：活跃房间列表（不含大厅；roomlist 应答） */
+export interface RoomListMsg {
+  type: 'roomlist'
+  rooms: Array<{ id: string; players: number; host: boolean }>
 }
 
 /** 服务端 → 客户端：房主解散了房间（MC 语义：房主走，房没） */
@@ -169,6 +176,8 @@ export type ClientCmd =
   | { type: 'getstate' }
   /** 房主主动关闭房间（房解散，客人收到 roomClosed） */
   | { type: 'closeRoom' }
+  /** 请求活跃房间列表（应答 roomlist） */
+  | { type: 'listrooms' }
   /** 开放到局域网（MC 式）：把一份世界状态装进房间（省略 room = 新建随机房），
    *  自己随即被移入该房。等价于「用存档开服」。 */
   | { type: 'hostsave'; room?: string; state: WorldState }

@@ -578,6 +578,16 @@ function applyCmd(room: Room, p: Player, cmd: ClientCmd) {
       else callVote(room, p, 'pause', undefined, cmd.paused)
       break
     }
+    case 'listrooms': {
+      // 活跃房间列表（不含大厅），按人数降序
+      const list = [...rooms.values()]
+        .filter((r) => r.id !== 'lobby' && r.players.size > 0)
+        .sort((a, b) => b.players.size - a.players.size)
+        .slice(0, 50)
+        .map((r) => ({ id: r.id, players: r.players.size, host: r.hostId != null }))
+      send(p.ws, { type: 'roomlist', rooms: list })
+      break
+    }
     case 'closeRoom': {
       // 房主主动关闭：房解散，客人收到 roomClosed
       if (room.hostId === p.id && room.id !== 'lobby') dissolveRoom(room, 'host_closed')
