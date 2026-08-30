@@ -44,6 +44,7 @@ export interface MetaMsg {
 
 export interface EffectMsg {
   type: 'effects'
+  /** 服务器只产生 merge（碰撞/并合）；spawn 型特效仅在客户端本地放置时出现 */
   effects: Array<{ x: number; y: number; age: number; ttl: number; size: number; color: string; kind: 'merge' | 'spawn' }>
 }
 

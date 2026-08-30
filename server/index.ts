@@ -108,13 +108,30 @@ interface Room {
   streamTimer: ReturnType<typeof setInterval> | null
   /** 每玩家生成时间戳（限速用） */
   spawnTimes: Map<string, number[]>
+  /** 最近活跃时间（空闲回收用） */
+  lastActive: number
 }
+
+/** 房间总数上限与空闲回收时限（每个房间一个 30Hz 模拟，无上限会拖垮整机） */
+const MAX_ROOMS = 32
+const ROOM_IDLE_MS = 10 * 60 * 1000
 
 const rooms = new Map<string, Room>()
 let voteSeq = 1
 
 function getRoom(id: string): Room {
   let r = rooms.get(id)
+  if (!r) {
+    evictIdleRooms()
+    if (rooms.size >= MAX_ROOMS && id !== 'lobby') {
+      // 房间满：让最老的空闲房让位（有人房间不动）
+      const idle = [...rooms.values()].filter((x) => x.id !== 'lobby' && x.players.size === 0).sort((a, b) => a.lastActive - b.lastActive)[0]
+      if (idle) {
+        stopRoomLoops(idle)
+        rooms.delete(idle.id)
+      }
+    }
+  }
   if (!r) {
     const sim = new Simulation()
     sim.config.perfTier = 'ultra'
@@ -134,10 +151,25 @@ function getRoom(id: string): Room {
       physicsTimer: null,
       streamTimer: null,
       spawnTimes: new Map(),
+      lastActive: Date.now(),
     }
     rooms.set(id, r)
   }
+  r.lastActive = Date.now()
   return r
+}
+
+/** 回收超时空闲房（有人房间永不回收） */
+function evictIdleRooms() {
+  const now = Date.now()
+  for (const [id, room] of rooms) {
+    if (id === 'lobby' || room.players.size > 0) continue
+    if (now - room.lastActive > ROOM_IDLE_MS) {
+      stopRoomLoops(room)
+      rooms.delete(id)
+      console.log(`[room ${id}] 空闲回收`)
+    }
+  }
 }
 
 function send(ws: WebSocket, msg: ServerMsg) {
@@ -569,9 +601,13 @@ function applyCmd(room: Room, p: Player, cmd: ClientCmd) {
     case 'permquery':
       sendPerms(room, cmd.bodyId, p.ws)
       break
-    case 'votecall':
+    case 'votecall': {
+      // action 白名单：垃圾 action 会空占投票槽（room.vote 非空时新投票全部被拒）
+      const actions = ['pause', 'rewind', 'clear', 'preset'] as const
+      if (!actions.includes(cmd.action)) break
       callVote(room, p, cmd.action, cmd.preset, cmd.paused)
       break
+    }
     case 'votecast':
       if (room.vote) {
         room.vote.votes.set(p.id, cmd.yes)

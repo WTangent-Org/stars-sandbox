@@ -89,25 +89,32 @@ check('第二个玩家看到存档天体', manifest3.some((b) => b.name === '测
 const roomMsg2 = c2.msgs.find((m) => m.type === 'room')
 check('房间内 2 名玩家', roomMsg2 && roomMsg2.players.length === 2, roomMsg2?.players.map((p) => p.name).join(', '))
 
-// —— 双人房暂停触发投票 ——
+// —— 双人房（c1 是 hostsave 开房的房主）暂停：房主直接执行，不发投票 ——
 // 先让房间跑 2.5s：快照每 1.5s 存一帧，攒出快照后面的回退测试才有东西可退
 await sleep(2500)
 c1.ws.send(JSON.stringify({ type: 'pause', paused: true }))
 await sleep(400)
 const vote = c2.msgs.find((m) => m.type === 'vote' && m.id >= 0)
-check('双人房暂停发起投票', !!vote && vote.action === 'pause', vote ? `${vote.initiator} 发起` : '')
-c2.ws.send(JSON.stringify({ type: 'votecast', yes: true }))
+const metaDirect = c1.msgs.filter((m) => m.type === 'meta').pop()
+check('房主房间暂停由房主直接执行（无投票）', !vote && metaDirect?.paused === true, `paused=${metaDirect?.paused} vote=${!!vote}`)
+// 非房主发 pause → 应被拒绝（不产生投票也不改暂停态）
+c2.ws.send(JSON.stringify({ type: 'pause', paused: false }))
 await sleep(400)
-const meta = c1.msgs.filter((m) => m.type === 'meta').pop()
-check('投票过半 → 暂停生效', meta && meta.paused === true)
+const vote2 = c2.msgs.find((m) => m.type === 'vote' && m.id >= 0)
+const metaDenied = c1.msgs.filter((m) => m.type === 'meta').pop()
+check('非房主暂停被拒绝（MC 房主语义）', !vote2 && metaDenied?.paused === true, `paused=${metaDenied?.paused}`)
+// 恢复运行交给后续「投票过半」检查：房主先恢复，再由客人视角验证不受影响
+c1.ws.send(JSON.stringify({ type: 'pause', paused: false }))
+await sleep(300)
 
-// —— 回退（bug#2 回归：服务器 step 现在有快照了） ——
-// 当前仍处于暂停态（上一项投票暂停了）——暂停下 simTime 不漂移，才能精确对比
-await sleep(2000) // 暂停前已运行数秒，快照已攒下
+// —— 回退（bug#2 回归：服务器 step 现在有快照了）。c1 是房主，rewind 直接执行 ——
+// 恢复运行 2s 攒快照，再暂停精确对比（暂停下 simTime 不漂移）
+c1.ws.send(JSON.stringify({ type: 'pause', paused: false }))
+await sleep(2000)
+c1.ws.send(JSON.stringify({ type: 'pause', paused: true }))
+await sleep(400)
 const beforeRewind = c1.msgs.filter((m) => m.type === 'meta').pop()?.simTime ?? 0
 c1.ws.send(JSON.stringify({ type: 'rewind' }))
-await sleep(300)
-c2.ws.send(JSON.stringify({ type: 'votecast', yes: true }))
 await sleep(800)
 const meta2 = c1.msgs.filter((m) => m.type === 'meta').pop()
 check(
@@ -124,5 +131,42 @@ check('特效广播有界（无累积泄漏）', maxEff < 50, `单批最大 ${ma
 c1.ws.close()
 c2.ws.close()
 await sleep(200)
+
+// —— 健壮性：null 包不崩服 + NaN/1e308 spawn 被拒 + 接管有人房间被拒 ——
+{
+  const evil = new WebSocket(url)
+  const evilMsgs = []
+  evil.on('message', (d, bin) => {
+    if (!bin) evilMsgs.push(JSON.parse(d.toString()))
+  })
+  await new Promise((r) => evil.on('open', r))
+  evil.send('null') // JSON.parse → null：旧版会崩掉整个进程
+  evil.send('{"type":"spawn","kind":"planet","x":NaN,"y":0,"vx":0,"vy":0,"mass":50}')
+  evil.send('{"type":"spawn","kind":"planet","x":0,"y":0,"vx":0,"vy":0,"mass":1e308}')
+  evil.send(JSON.stringify({ type: 'join', room: 'rob-' + Date.now() }))
+  await sleep(500)
+  const roomOk = evilMsgs.some((m) => m.type === 'room')
+  check('null 包与 NaN/1e308 spawn 不崩服且进房正常', roomOk, `room=${roomOk}`)
+
+  // 用另一个连接先占住一个房，evil 再尝试 hostsave 接管 → 应被拒（hosted.room 为空）
+  const holder = new WebSocket(url)
+  await new Promise((r) => holder.on('open', r))
+  const holdRoom = 'hold-' + Date.now()
+  holder.send(JSON.stringify({ type: 'join', room: holdRoom }))
+  await sleep(400)
+  evil.send(
+    JSON.stringify({
+      type: 'hostsave',
+      room: holdRoom,
+      state: { version: 1, config: { G: 1, timeScale: 30, softening: 3, trails: true, trailsForever: false, paused: false }, simTime: 0, merges: 0, bodies: [] },
+    }),
+  )
+  await sleep(600)
+  const hosted = evilMsgs.filter((m) => m.type === 'hosted').pop()
+  check('hostsave 不能接管有人房间', hosted && hosted.room === '', `hosted.room=${hosted?.room}`)
+  evil.close()
+  holder.close()
+}
+
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`)
 process.exit(failures === 0 ? 0 : 1)
