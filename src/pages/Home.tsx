@@ -6,6 +6,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { NetStatus } from '../sim/net'
+import { Simulation } from '../sim/engine'
+import { loadPreset, PRESETS } from '../sim/presets'
 import type { PresetId, ToolMode, UnitProfile } from '../sim/types'
 import Dock from '../sections/Dock'
 import GameMenu from '../sections/GameMenu'
@@ -14,6 +16,7 @@ import SelectedCard from '../sections/SelectedCard'
 import ShipTelemetry from '../sections/ShipTelemetry'
 import StatsBar from '../sections/StatsBar'
 import { loadPrefs, savePrefs, type Prefs } from '../sim/prefs'
+import { putAutosave } from '../sim/saveStore'
 import { fmtSimTime } from '../sim/format'
 import { createRt } from './rt'
 import { useNetRoom } from './hooks/useNetRoom'
@@ -25,7 +28,7 @@ import { useMenuFlow } from './hooks/useMenuFlow'
 
 export default function Home() {
   const [rt] = useState(createRt)
-  const { net, localSim } = rt
+  const { net, localSim, future } = rt
 
   // —— 偏好设置（摇杆模式/位置、预演时长、房号、性能档），localStorage 持久化 ——
   const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs())
@@ -75,6 +78,38 @@ export default function Home() {
   const worldOps = useWorldOps({ rt, rerender, onPrefs, setUnits, setCurrentPreset, setSelectedId, setFollow, setWarp, setMode, showSaveMsg })
   const { spawnCfg, onConfig, applyWarp, applyPreset, doRewind, onClear, onSpawnSettings, deployShip } = worldOps
 
+  /** 一键从联机切回单机：宇宙存本地 + 恢复进本地模拟，无缝继续（不用回主菜单） */
+  const backToSingle = useCallback(async () => {
+    try {
+      const st = await net.requestState()
+      st.camera = { ...rt.camRef.current }
+      await putAutosave(st)
+      setAutosaveInfo({ savedAt: Date.now(), bodies: st.bodies.length, preset: st.preset })
+      localSim.restoreWorld(st)
+      rt.baseTimeScaleRef.current = st.config.timeScale
+      const pid = st.preset
+      if (pid && PRESETS.some((pr) => pr.id === pid)) {
+        const probe = new Simulation()
+        const { zoom, units: u } = loadPreset(probe, pid as PresetId)
+        rt.camRef.current = st.camera ?? { x: 0, y: 0, zoom }
+        rt.unitsRef.current = u
+        setUnits(u)
+        setCurrentPreset(pid as PresetId)
+      }
+    } catch {
+      /* 保存失败也照样回单机 */
+    }
+    if (net.isHost) net.closeRoom()
+    else {
+      rt.netDesiredRef.current = false
+      net.disconnect()
+    }
+    setSelectedId(null)
+    setFollow(false)
+    rt.future.invalidate()
+    rerender()
+  }, [net, localSim, rt, setUnits, setCurrentPreset, setSelectedId, setFollow, setAutosaveInfo, rerender])
+
   // —— 暂停切换（空格与底部按钮共用；有主房里是房主特权） ——
   const togglePause = useCallback(() => {
     if (rt.onlineRef.current) {
@@ -98,6 +133,8 @@ export default function Home() {
     rerender,
     togglePause,
     localSim,
+    net,
+    future,
     mode,
     setMode,
     spawnCfg,
@@ -190,6 +227,7 @@ export default function Home() {
                 isHost: net.isHost,
               }}
               onCloseRoom={() => net.closeRoom()}
+              onBackToSingle={() => void backToSingle()}
               saves={saves}
               saveMsg={saveMsg}
               onSaveCurrent={() => void onSaveCurrent()}

@@ -49,6 +49,7 @@ interface Params {
 
 export function useRuntime(p: Params) {
   const { rt } = p
+  const { rerender, setUnits, setCurrentPreset, setAutosaveInfo } = p
   const { net, localSim, future } = rt
   const [stats, setStats] = useState<SimStats>({ bodies: 0, stars: 0, fps: 60, simTime: 0, merges: 0, totalMass: 0 })
   const [selOrbit, setSelOrbit] = useState<SelOrbitInfo | null>(null)
@@ -77,7 +78,7 @@ export function useRuntime(p: Params) {
         if (rec && !cancelled && !rt.userTouchedRef.current) {
           localSim.restoreWorld(rec.state)
           restored = true
-          p.setAutosaveInfo({ savedAt: rec.savedAt, bodies: rec.state.bodies.length, preset: rec.state.preset })
+          setAutosaveInfo({ savedAt: rec.savedAt, bodies: rec.state.bodies.length, preset: rec.state.preset })
           const pid = rec.state.preset
           if (pid && PRESETS.some((pr) => pr.id === pid)) {
             // 合法预设：用探针恢复单位换算，相机用存档里的。
@@ -87,16 +88,16 @@ export function useRuntime(p: Params) {
             const { zoom, units: u } = loadPreset(probe, pid as PresetId)
             rt.camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom }
             rt.unitsRef.current = u
-            p.setUnits(u)
+            setUnits(u)
             rt.baseTimeScaleRef.current = probe.config.timeScale
             localSim.config.timeScale = probe.config.timeScale
-            p.setCurrentPreset(pid as PresetId)
+            setCurrentPreset(pid as PresetId)
           } else {
             rt.camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom: 1 }
             rt.unitsRef.current = undefined
-            p.setUnits(undefined)
+            setUnits(undefined)
             rt.baseTimeScaleRef.current = rec.state.config.timeScale
-            p.setCurrentPreset('empty')
+            setCurrentPreset('empty')
           }
         }
       } catch {
@@ -107,12 +108,12 @@ export function useRuntime(p: Params) {
         rt.camRef.current = { x: 0, y: 0, zoom }
         rt.baseTimeScaleRef.current = localSim.config.timeScale
         rt.unitsRef.current = u
-        p.setUnits(u)
-        p.setCurrentPreset('real')
+        setUnits(u)
+        setCurrentPreset('real')
       }
       if (!cancelled) {
         future.fork(localSim)
-        p.rerender()
+        rerender()
       }
     })()
     return () => {
@@ -340,7 +341,7 @@ export function useRuntime(p: Params) {
       clearInterval(statTimer)
       window.removeEventListener('resize', resize)
     }
-  }, [net, future, findMyShip, rt, p])
+  }, [net, future, findMyShip, rt, rerender, setUnits, setCurrentPreset, setAutosaveInfo])
 
   return { stats, selOrbit, shipTel }
 }

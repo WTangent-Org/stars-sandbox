@@ -48,6 +48,8 @@ interface Props {
   onPrefs: (patch: Partial<Prefs>) => void
   net: DockNetInfo
   onCloseRoom: () => void
+  /** 联机中一键切回单机：宇宙存入本地并离线继续（无需回主菜单） */
+  onBackToSingle: () => void
   // —— 存档（世界页内嵌） ——
   saves: SaveMeta[]
   saveMsg: string
@@ -376,8 +378,18 @@ export default function Dock(p: Props) {
                   )}
                 </>
               )}
+              {p.net.online && (
+                <button
+                  onClick={p.onBackToSingle}
+                  className="mt-2 w-full rounded border border-[#22d3ee]/40 bg-[#22d3ee]/10 px-2 py-1.5 text-[11px] text-[#dbe4f3] hover:bg-[#22d3ee]/20"
+                >
+                  ⏏ 保存并回到单机
+                </button>
+              )}
               {!p.net.online && (
-                <p className="mt-1.5 text-[10px] leading-relaxed text-[#5b6b8c]/70">加入多人：回主菜单选「多人游戏」。开放自己的宇宙：右上 ☰ 菜单。</p>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-[#5b6b8c]/70">
+                  当前已是单机模式。要联机：点上方「公共大厅 / 房间」进入，或「＋新建房间」开放自己的宇宙。
+                </p>
               )}
             </div>
           </>

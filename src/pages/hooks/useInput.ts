@@ -16,6 +16,8 @@ interface Params {
   togglePause: () => void
   /** 联机有主房里非房主的全局操作会被服务器拒绝；这里只管本地路径 */
   localSim: Rt['localSim']
+  net: Rt['net']
+  future: Rt['future']
   /** 状态单一来源在 Home：交互层只读写 */
   mode: ToolMode
   setMode: (m: ToolMode) => void
@@ -28,17 +30,18 @@ interface Params {
 
 export function useInput(p: Params) {
   const { rt } = p
-  const { net, localSim, future, modeRef, spawnCfgRef, selectedRef, followRef, spawnPreviewRef, camRef, dragRef, grabRef, keysRef, joystickRef, joyAnchorRef, pointersRef, pinchRef, prefsRef, onlineRef } = rt
+  const { net, localSim, future, togglePause, rerender, mode, spawnCfg, selectedId, follow, setSelectedId, setFollow } = p
+  const { modeRef, spawnCfgRef, selectedRef, followRef, spawnPreviewRef, camRef, dragRef, grabRef, keysRef, joystickRef, joyAnchorRef, pointersRef, pinchRef, prefsRef, onlineRef } = rt
   const [joystick, setJoystick] = useState({ active: false, x: 0, y: 0 })
   const [joyAnchor, setJoyAnchor] = useState<{ x: number; y: number } | null>(null)
 
   // 同步到共享运行时（rAF 循环与各 hooks 读 ref，不参与渲染）。
   // 每次渲染后同步：rAF 帧回调在此之后运行，语义与 render 体同步等价
   useEffect(() => {
-    modeRef.current = p.mode
-    spawnCfgRef.current = p.spawnCfg
-    selectedRef.current = p.selectedId
-    followRef.current = p.follow
+    modeRef.current = mode
+    spawnCfgRef.current = spawnCfg
+    selectedRef.current = selectedId
+    followRef.current = follow
   })
 
   const toWorld = useCallback((px: number, py: number) => {
@@ -56,14 +59,14 @@ export function useInput(p: Params) {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault()
       if (e.code === 'Space') {
         e.preventDefault()
-        p.togglePause()
+        togglePause()
       } else if (e.key === 't' || e.key === 'T') {
         // 轨迹是纯本地渲染层行为：本地与镜像两个配置都写，保持同步
         localSim.config.trails = !localSim.config.trails
         net.mirror.config.trails = localSim.config.trails
-        p.rerender()
+        rerender()
       } else if (e.key === 'Escape') {
-        p.setSelectedId(null)
+        setSelectedId(null)
         p.setFollow(false)
         spawnPreviewRef.current = null
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRef.current != null) {
@@ -73,7 +76,7 @@ export function useInput(p: Params) {
           localSim.removeBody(selectedRef.current)
           future.invalidate()
         }
-        p.setSelectedId(null)
+        setSelectedId(null)
       }
     }
     const onKeyUp = (e: KeyboardEvent) => keysRef.current.delete(e.code)
@@ -83,7 +86,7 @@ export function useInput(p: Params) {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [net, localSim, future, rt, p])
+  }, [net, localSim, future, rt, togglePause, rerender, setSelectedId, setFollow])
 
   // —— 指针交互 ——
   const onPointerDown = (e: React.PointerEvent) => {
@@ -296,7 +299,7 @@ export function useInput(p: Params) {
         }
         if (onlineRef.current) {
           net.send({ type: 'spawn', kind: 'ship', x: sp.sx, y: sp.sy, vx: svx, vy: svy, mass: 0.001 })
-          p.setSelectedId(null)
+          setSelectedId(null)
         } else {
           // 全场唯一：先退役旧飞船
           for (const s of sim.bodies.filter((b) => b.kind === 'ship')) sim.removeBody(s.id)
