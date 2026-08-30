@@ -6,8 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { NetStatus } from '../sim/net'
-import type { PerfTier, PresetId, ToolMode, UnitProfile } from '../sim/types'
-import { PERF_TIERS } from '../sim/types'
+import type { PresetId, ToolMode, UnitProfile } from '../sim/types'
 import Dock from '../sections/Dock'
 import GameMenu from '../sections/GameMenu'
 import MainMenu, { type AutosaveInfo } from '../sections/MainMenu'
@@ -23,9 +22,6 @@ import { useWorldOps } from './hooks/useWorldOps'
 import { useInput } from './hooks/useInput'
 import { useRuntime } from './hooks/useRuntime'
 import { useMenuFlow } from './hooks/useMenuFlow'
-
-/** 性能档位中文名（徽标用） */
-const TIER_LABEL: Record<PerfTier, string> = { ultra: '极致', high: '高', balanced: '均衡', low: '低', saver: '省电' }
 
 export default function Home() {
   const [rt] = useState(createRt)
@@ -72,13 +68,10 @@ export default function Home() {
   const { screen, setScreen, menuOpen, setMenuOpen, startLocalWorld, joinMultiplayer, exitToMenu, loadSaveFromMenu } = menu
 
   // —— 联机房间接线 ——
-  const netRoom = useNetRoom({ rt, netStatus, selectedId, setNetStatus, bumpLobby, showSaveMsg, rerender, setUnits, setCurrentPreset, setSelectedId, setFollow })
-  const { connectNet } = netRoom
-
+  useNetRoom({ rt, netStatus, selectedId, setNetStatus, bumpLobby, showSaveMsg, rerender, setUnits, setCurrentPreset, setSelectedId, setFollow })
+  
   // —— 世界级操作 ——
   const [warp, setWarp] = useState(1)
-  // 窄屏（手机/平板竖屏）默认收起停靠栏，画布优先
-  const [dockOpen, setDockOpen] = useState(() => (typeof window === 'undefined' ? true : window.innerWidth >= 820))
   const worldOps = useWorldOps({ rt, rerender, onPrefs, setUnits, setCurrentPreset, setSelectedId, setFollow, setWarp, setMode, showSaveMsg })
   const { spawnCfg, onConfig, applyWarp, applyPreset, doRewind, onClear, onSpawnSettings, deployShip } = worldOps
 
@@ -141,10 +134,6 @@ export default function Home() {
       : '拖动天体移动 / 甩出 · 拖动空白平移 · 滚轮缩放 · 空格暂停'
 
   const paused = online ? net.paused : localSim.config.paused
-  // 性能徽标：auto 档显示当前实际生效档位（与 PERF_TIERS 对象做 identity 比较）
-  const effectiveTier = (Object.keys(PERF_TIERS) as PerfTier[]).find((t) => PERF_TIERS[t] === sim.perf) ?? 'balanced'
-  const perfLabel =
-    sim.config.perfTier === 'auto' ? `自动·${TIER_LABEL[effectiveTier]}` : TIER_LABEL[sim.config.perfTier as PerfTier]
   return (
     <div className="scanlines relative h-full w-full overflow-hidden bg-[#050810]">
       <canvas
@@ -161,33 +150,20 @@ export default function Home() {
       {screen === 'game' && (
         <>
           <div className="pointer-events-none absolute left-3 top-3 z-10 origin-top-left scale-[0.72] sm:left-5 sm:top-5 sm:scale-100">
-            <StatsBar stats={stats} zoom={rt.camRef.current.zoom} running={!paused} units={units} />
+            <StatsBar stats={stats} running={!paused} units={units} />
           </div>
 
-          {/* 右上：菜单按钮 + 连接/性能徽标 */}
-          <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-2 sm:right-5 sm:top-5">
+          {/* 右上：☰ 菜单（联机/性能状态在 Dock 系统页与菜单内） */}
+          <div className="absolute right-3 top-3 z-10 sm:right-5 sm:top-5">
             <button
               onClick={() => setMenuOpen(!menuOpen)}
               className="glass pointer-events-auto rounded-md px-3 py-1.5 font-mono text-[10px] tracking-[0.2em] text-[#5b6b8c] transition-colors hover:text-[#dbe4f3]"
             >
-              {menuOpen ? '关闭菜单 ×' : '☰ 菜单'}
+              {menuOpen ? '关闭 ×' : '☰ 菜单'}
             </button>
-            <div className="glass pointer-events-none rounded-md px-2 py-1 font-mono text-[9px]">
-              {online ? (
-                <span className="text-[#34d399]">联机 · {net.room === 'lobby' ? '公共大厅' : `房间 ${net.room}`}</span>
-              ) : netStatus === 'connecting' ? (
-                <span className="text-[#fbbf24]">连接中…</span>
-              ) : (
-                <span className="text-[#f87171]">离线 · 单机模式</span>
-              )}
-            </div>
-            <div className="glass pointer-events-none rounded-md px-2 py-1 font-mono text-[9px] text-[#5b6b8c]">
-              性能 <span className="text-[#22d3ee]">{perfLabel}</span>
-            </div>
           </div>
 
-          {/* 左侧：停靠栏（场景/创建/飞船/联机/设置） */}
-          {dockOpen && (
+          {/* 左侧：停靠栏（世界/创造/系统） */}
           <Dock
             config={sim.config}
             onConfig={onConfig}
@@ -212,19 +188,15 @@ export default function Home() {
               hostName: net.hostId != null ? net.players.find((pl) => pl.id === net.hostId)?.name ?? null : null,
               isHost: net.isHost,
             }}
-            onReconnect={connectNet}
             onCloseRoom={() => net.closeRoom()}
-            onCollapse={() => setDockOpen(false)}
+            saves={saves}
+            saveMsg={saveMsg}
+            onSaveCurrent={() => void onSaveCurrent()}
+            onLoadSave={(id) => void loadSaveFromMenu(id)}
+            onDeleteSave={(id) => void onDeleteSave(id)}
+            onExportSave={(id) => void onExportSave(id)}
+            onImportSave={() => void onImportSave()}
           />
-          )}
-          {!dockOpen && (
-            <button
-              onClick={() => setDockOpen(true)}
-              className="glass pointer-events-auto absolute left-3 top-[136px] z-10 rounded-md px-3 py-1.5 font-mono text-[10px] tracking-[0.2em] text-[#5b6b8c] transition-colors hover:text-[#dbe4f3] sm:left-5"
-            >
-              ☰ 控制面板 +
-            </button>
-          )}
 
           {/* 底部居中：时间控制条（回退 / 暂停 / 倍率 / T+ 读数） */}
           <div className="glass pointer-events-auto absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-md px-2 py-1">
@@ -247,17 +219,13 @@ export default function Home() {
               {paused ? '▶ 继续' : '❚❚ 暂停'}
             </button>
             <div className="h-3.5 w-px bg-[#1a2540]" />
-            {[1, 10, 100, 1000].map((w) => (
-              <button
-                key={w}
-                onClick={() => applyWarp(w)}
-                className={`rounded px-2 py-1 font-mono text-[10px] transition-all ${
-                  warp === w ? 'bg-[#22d3ee]/20 text-[#22d3ee] shadow-[0_0_10px_rgba(34,211,238,0.25)]' : 'text-[#5b6b8c] hover:text-[#dbe4f3]'
-                }`}
-              >
-                ×{w}
-              </button>
-            ))}
+            <button
+              onClick={() => applyWarp(warp === 1 ? 10 : warp === 10 ? 100 : warp === 100 ? 1000 : 1)}
+              title="时间倍率：点击循环 ×1 → ×10 → ×100 → ×1000"
+              className="rounded px-2 py-1 font-mono text-[10px] text-[#22d3ee] transition-all hover:bg-[#22d3ee]/10"
+            >
+              ×{warp}
+            </button>
             <div className="h-3.5 w-px bg-[#1a2540]" />
             <span className="px-2 font-mono text-[10px] text-[#5b6b8c]" title="模拟时间">
               T+ <span className="text-[#dbe4f3]">{fmtSimTime(stats.simTime, units)}</span>
@@ -427,6 +395,7 @@ export default function Home() {
         <MainMenu
           autosave={autosaveInfo}
           saves={saves}
+          lastRoom={prefs.roomCode || undefined}
           onContinue={() => setScreen('game')}
           onNewWorld={startLocalWorld}
           onLoadSave={(id) => void loadSaveFromMenu(id)}

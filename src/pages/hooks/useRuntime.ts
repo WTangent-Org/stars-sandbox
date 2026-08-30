@@ -80,13 +80,16 @@ export function useRuntime(p: Params) {
           p.setAutosaveInfo({ savedAt: rec.savedAt, bodies: rec.state.bodies.length, preset: rec.state.preset })
           const pid = rec.state.preset
           if (pid && PRESETS.some((pr) => pr.id === pid)) {
-            // 合法预设：用探针恢复单位换算，相机用存档里的
+            // 合法预设：用探针恢复单位换算，相机用存档里的。
+            // 基准流速用预设默认值归一化——存档里的 timeScale 是「基准×当时倍率」
+            // 的合成值，直接当基准会让 1× 永远跑在旧倍率上
             const probe = new Simulation()
             const { zoom, units: u } = loadPreset(probe, pid as PresetId)
             rt.camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom }
             rt.unitsRef.current = u
             p.setUnits(u)
-            rt.baseTimeScaleRef.current = rec.state.config.timeScale
+            rt.baseTimeScaleRef.current = probe.config.timeScale
+            localSim.config.timeScale = probe.config.timeScale
             p.setCurrentPreset(pid as PresetId)
           } else {
             rt.camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom: 1 }

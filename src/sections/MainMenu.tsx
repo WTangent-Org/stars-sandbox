@@ -13,6 +13,8 @@ export interface AutosaveInfo {
 interface Props {
   autosave: AutosaveInfo | null
   saves: SaveMeta[]
+  /** 上次进入的房间号（localStorage 持久化）：多人页一键直达 */
+  lastRoom?: string
   onContinue: () => void
   onNewWorld: (preset: PresetId) => void
   onLoadSave: (id: string) => void
@@ -149,6 +151,15 @@ export default function MainMenu(p: Props) {
             <button onClick={back} className="font-mono text-[11px] text-[#5b6b8c] hover:text-[#dbe4f3]">
               ← 返回
             </button>
+            {p.lastRoom && (
+              <button
+                onClick={() => p.onJoinMultiplayer(p.lastRoom!)}
+                className="w-full rounded-md border border-[#34d399]/50 bg-[#34d399]/10 px-4 py-2.5 text-left text-[13px] text-[#34d399] hover:bg-[#34d399]/20"
+              >
+                ↩ 回到上次房间「{p.lastRoom}」
+                <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">免输房号，直接重进你的联机宇宙</span>
+              </button>
+            )}
             <div className="space-y-1.5">
               <span className="mg-label">房间号</span>
               <input
