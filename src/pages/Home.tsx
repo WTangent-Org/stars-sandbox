@@ -163,40 +163,42 @@ export default function Home() {
             </button>
           </div>
 
-          {/* 左侧：停靠栏（世界/创造/系统） */}
-          <Dock
-            config={sim.config}
-            onConfig={onConfig}
-            mode={mode}
-            onMode={setMode}
-            spawn={spawnCfg}
-            onSpawn={onSpawnSettings}
-            currentPreset={currentPreset}
-            onPreset={applyPreset}
-            onResetScene={() => applyPreset(currentPreset)}
-            onClear={onClear}
-            hasShip={sim.bodies.some((b) => b.kind === 'ship' && b.alive)}
-            onDeployShip={deployShip}
-            prefs={prefs}
-            onPrefs={onPrefs}
-            net={{
-              status: netStatus,
-              online,
-              room: net.room,
-              players: net.players,
-              youId: net.you?.id,
-              hostName: net.hostId != null ? net.players.find((pl) => pl.id === net.hostId)?.name ?? null : null,
-              isHost: net.isHost,
-            }}
-            onCloseRoom={() => net.closeRoom()}
-            saves={saves}
-            saveMsg={saveMsg}
-            onSaveCurrent={() => void onSaveCurrent()}
-            onLoadSave={(id) => void loadSaveFromMenu(id)}
-            onDeleteSave={(id) => void onDeleteSave(id)}
-            onExportSave={(id) => void onExportSave(id)}
-            onImportSave={() => void onImportSave()}
-          />
+          {/* 左侧：停靠栏（世界/创造/系统）——挂在 HUD 下方 */}
+          <div className="absolute left-3 top-[56px] z-10 sm:left-5">
+            <Dock
+              config={sim.config}
+              onConfig={onConfig}
+              mode={mode}
+              onMode={setMode}
+              spawn={spawnCfg}
+              onSpawn={onSpawnSettings}
+              currentPreset={currentPreset}
+              onPreset={applyPreset}
+              onResetScene={() => applyPreset(currentPreset)}
+              onClear={onClear}
+              hasShip={sim.bodies.some((b) => b.kind === 'ship' && b.alive)}
+              onDeployShip={deployShip}
+              prefs={prefs}
+              onPrefs={onPrefs}
+              net={{
+                status: netStatus,
+                online,
+                room: net.room,
+                players: net.players,
+                youId: net.you?.id,
+                hostName: net.hostId != null ? net.players.find((pl) => pl.id === net.hostId)?.name ?? null : null,
+                isHost: net.isHost,
+              }}
+              onCloseRoom={() => net.closeRoom()}
+              saves={saves}
+              saveMsg={saveMsg}
+              onSaveCurrent={() => void onSaveCurrent()}
+              onLoadSave={(id) => void loadSaveFromMenu(id)}
+              onDeleteSave={(id) => void onDeleteSave(id)}
+              onExportSave={(id) => void onExportSave(id)}
+              onImportSave={() => void onImportSave()}
+            />
+          </div>
 
           {/* 底部居中：时间控制条（回退 / 暂停 / 倍率 / T+ 读数） */}
           <div className="glass pointer-events-auto absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-md px-2 py-1">
