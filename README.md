@@ -62,8 +62,8 @@ irm https://raw.githubusercontent.com/WTangent-Org/stars-sandbox/main/install.ps
 git clone --depth 1 https://github.com/WTangent-Org/stars-sandbox.git
 cd stars-sandbox
 npm install
-npm run build        # 前端 dist/ + 服务端 dist-server/server.js + dist/boot.js
-npm start            # = node dist-server/server.js，8321 单端口托管网页 + WS
+npm run build        # 前端 dist/ + 服务端 + dist/boot.js 一体化入口
+npm start            # = node dist/boot.js，8321 单端口托管网页 + WS
 ```
 
 单目录交付（Kimi 发布平台约定入口）：`node dist/boot.js`（内部转发到 `dist/server/server.js`）。
@@ -81,6 +81,14 @@ docker run -d -p 8321:8321 stars-sandbox
 
 - **本地存档**：存在浏览器 IndexedDB 里，左侧停靠栏「存档」页管理（保存 / 读取 / 删除），可导出为 `.json` 文件带走、也能导入回来。
 - **开放到局域网**：把当前宇宙一键装进一个新房间——生成房号后发给朋友，对方在同一服务器网页上填房号即加入你的世界（类似 MC 的「对局域网开放」）。
+
+## 玩法补充
+
+**质量段**：类型由质量唯一决定——小行星 <0.1 / 卫星 <10 / 行星 <24000 / 恒星 <50 万 / 黑洞 ≥50 万（创建页一个滑杆搞定）。天体并合后按新质量重新定级：卫星并成行星、行星过 24000 点燃为恒星。
+
+**恒星生命周期**：吞并与岁月双驱动——恒星按质量三次方速率自然衰老（大质量短命），×100/×1000 时间倍率可加速观看主序星 → 红巨星 → （超新星 → 黑洞 或 白矮星）的全程。
+
+**开发/测试**：`npm test` 跑引擎单元测试；`TEST_PORT=8399 npm run smoke` 跑联机协议端到端冒烟（需先起一个对应端口的服务器）。
 
 ## 联机规则
 

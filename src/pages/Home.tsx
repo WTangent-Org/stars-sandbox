@@ -66,7 +66,6 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [follow, setFollow] = useState(false)
   const [mode, setMode] = useState<ToolMode>('pan')
-  rt.modeRef.current = mode
 
   // —— 主菜单 / 游戏菜单流程 ——
   const menu = useMenuFlow({ rt, rerender, saveAutosave, showSaveMsg, onPrefs, setUnits, setCurrentPreset, setSelectedId, setFollow, setAutosaveInfo })
@@ -114,9 +113,7 @@ export default function Home() {
     follow,
     setFollow,
   })
-  rt.spawnCfgRef.current = spawnCfg
-  rt.selectedRef.current = selectedId
-  rt.followRef.current = follow
+
 
   // —— 运行时（启动恢复 + rAF 主循环 + 遥测） ——
   const { stats, selOrbit, shipTel } = useRuntime({ rt, rerender, setUnits, setCurrentPreset, setAutosaveInfo })

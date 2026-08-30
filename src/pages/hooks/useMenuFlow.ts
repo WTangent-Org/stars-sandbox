@@ -25,7 +25,7 @@ interface Params {
 
 export function useMenuFlow(p: Params) {
   const { rt } = p
-  const { net, localSim, future } = rt
+  const { net, localSim, future, camRef, unitsRef, baseTimeScaleRef, userTouchedRef, netDesiredRef } = rt
   // MC 式双层界面：menu = 主菜单（世界列表/多人），game = 游戏；menuOpen = 游戏内菜单覆盖层
   const [screen, setScreen] = useState<'menu' | 'game'>('menu')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -42,13 +42,13 @@ export function useMenuFlow(p: Params) {
   /** 开始一个本地世界（若在联机则先断开：本地世界与房间无关） */
   const startLocalWorld = useCallback(
     (id: PresetId) => {
-      rt.userTouchedRef.current = true
-      rt.netDesiredRef.current = false
+      userTouchedRef.current = true
+      netDesiredRef.current = false
       net.disconnect()
       const { zoom, units: u } = loadPreset(localSim, id)
-      rt.camRef.current = { x: 0, y: 0, zoom }
-      rt.baseTimeScaleRef.current = localSim.config.timeScale
-      rt.unitsRef.current = u
+      camRef.current = { x: 0, y: 0, zoom }
+      baseTimeScaleRef.current = localSim.config.timeScale
+      unitsRef.current = u
       p.setUnits(u)
       p.setCurrentPreset(id)
       p.setSelectedId(null)
@@ -66,7 +66,7 @@ export function useMenuFlow(p: Params) {
     (roomCode: string) => {
       p.onPrefs({ roomCode })
       net.pendingRoom = roomCode
-      rt.netDesiredRef.current = true
+      netDesiredRef.current = true
       net.connect()
       setScreen('game')
     },
@@ -78,7 +78,7 @@ export function useMenuFlow(p: Params) {
     try {
       if (rt.onlineRef.current) {
         const state = await net.requestState()
-        state.camera = { ...rt.camRef.current }
+        state.camera = { ...camRef.current }
         await putAutosave(state)
         setAutosaveInfo({ savedAt: Date.now(), bodies: state.bodies.length, preset: state.preset })
       } else {
@@ -91,7 +91,7 @@ export function useMenuFlow(p: Params) {
       if (net.isHost) {
         net.closeRoom() // 房主：房随人走，客人收到 roomClosed
       } else {
-        rt.netDesiredRef.current = false
+        netDesiredRef.current = false
         net.disconnect()
       }
     }
@@ -103,7 +103,7 @@ export function useMenuFlow(p: Params) {
   /** 主菜单：载入本地世界（强制离线进入；联机中先断开） */
   const loadSaveFromMenu = useCallback(
     async (id: string) => {
-      rt.userTouchedRef.current = true
+      userTouchedRef.current = true
       try {
         const rec = await getSave(id)
         if (!rec) {
@@ -111,22 +111,22 @@ export function useMenuFlow(p: Params) {
           return
         }
         if (rt.onlineRef.current) {
-          rt.netDesiredRef.current = false
+          netDesiredRef.current = false
           net.disconnect()
         }
         localSim.restoreWorld(rec.state)
-        rt.baseTimeScaleRef.current = rec.state.config.timeScale
+        baseTimeScaleRef.current = rec.state.config.timeScale
         const pid = rec.state.preset
         if (pid && PRESETS.some((pr) => pr.id === pid)) {
           const probe = new Simulation()
           const { zoom, units: u } = loadPreset(probe, pid as PresetId)
-          rt.camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom }
-          rt.unitsRef.current = u
+          camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom }
+          unitsRef.current = u
           p.setUnits(u)
           p.setCurrentPreset(pid as PresetId)
         } else {
-          rt.camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom: 1 }
-          rt.unitsRef.current = undefined
+          camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom: 1 }
+          unitsRef.current = undefined
           p.setUnits(undefined)
           p.setCurrentPreset('empty')
         }

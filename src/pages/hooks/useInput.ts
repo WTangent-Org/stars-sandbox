@@ -28,18 +28,21 @@ interface Params {
 
 export function useInput(p: Params) {
   const { rt } = p
-  const { net, localSim, future } = rt
+  const { net, localSim, future, modeRef, spawnCfgRef, selectedRef, followRef, spawnPreviewRef, camRef, dragRef, grabRef, keysRef, joystickRef, joyAnchorRef, pointersRef, pinchRef, prefsRef, onlineRef } = rt
   const [joystick, setJoystick] = useState({ active: false, x: 0, y: 0 })
   const [joyAnchor, setJoyAnchor] = useState<{ x: number; y: number } | null>(null)
 
-  // 同步到共享运行时（rAF 循环与各 hooks 读 ref，不参与渲染）
-  rt.modeRef.current = p.mode
-  rt.spawnCfgRef.current = p.spawnCfg
-  rt.selectedRef.current = p.selectedId
-  rt.followRef.current = p.follow
+  // 同步到共享运行时（rAF 循环与各 hooks 读 ref，不参与渲染）。
+  // 每次渲染后同步：rAF 帧回调在此之后运行，语义与 render 体同步等价
+  useEffect(() => {
+    modeRef.current = p.mode
+    spawnCfgRef.current = p.spawnCfg
+    selectedRef.current = p.selectedId
+    followRef.current = p.follow
+  })
 
   const toWorld = useCallback((px: number, py: number) => {
-    const cam = rt.camRef.current
+    const cam = camRef.current
     return {
       x: (px - window.innerWidth / 2) / cam.zoom + cam.x,
       y: (py - window.innerHeight / 2) / cam.zoom + cam.y,
@@ -49,7 +52,7 @@ export function useInput(p: Params) {
   // —— 键盘快捷键 ——
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      rt.keysRef.current.add(e.code)
+      keysRef.current.add(e.code)
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault()
       if (e.code === 'Space') {
         e.preventDefault()
@@ -62,18 +65,18 @@ export function useInput(p: Params) {
       } else if (e.key === 'Escape') {
         p.setSelectedId(null)
         p.setFollow(false)
-        rt.spawnPreviewRef.current = null
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && rt.selectedRef.current != null) {
-        if (rt.onlineRef.current) {
-          net.send({ type: 'remove', id: rt.selectedRef.current })
+        spawnPreviewRef.current = null
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRef.current != null) {
+        if (onlineRef.current) {
+          net.send({ type: 'remove', id: selectedRef.current })
         } else {
-          localSim.removeBody(rt.selectedRef.current)
+          localSim.removeBody(selectedRef.current)
           future.invalidate()
         }
         p.setSelectedId(null)
       }
     }
-    const onKeyUp = (e: KeyboardEvent) => rt.keysRef.current.delete(e.code)
+    const onKeyUp = (e: KeyboardEvent) => keysRef.current.delete(e.code)
     window.addEventListener('keydown', onKey)
     window.addEventListener('keyup', onKeyUp)
     return () => {
@@ -87,30 +90,30 @@ export function useInput(p: Params) {
     const sim = rt.activeSimRef.current
     if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1) return
     // 随手模式：触屏落在摇杆侧半屏 → 该触点即摇杆中心，优先于平移/拾取
-    if (e.pointerType === 'touch' && rt.prefsRef.current.joyMode === 'float' && rt.pointersRef.current.size === 0) {
+    if (e.pointerType === 'touch' && prefsRef.current.joyMode === 'float' && pointersRef.current.size === 0) {
       const hasShip = sim.bodies.some((b) => b.kind === 'ship' && b.alive)
-      const side = rt.prefsRef.current.joySide
+      const side = prefsRef.current.joySide
       const inZone = side === 'left' ? e.clientX < window.innerWidth * 0.42 : e.clientX > window.innerWidth * 0.58
       if (hasShip && inZone && e.clientY > window.innerHeight * 0.25) {
-        rt.pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
-        rt.joyAnchorRef.current = { x: e.clientX, y: e.clientY }
-        setJoyAnchor(rt.joyAnchorRef.current)
-        rt.joystickRef.current = { active: true, x: 0, y: 0 }
+        pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+        joyAnchorRef.current = { x: e.clientX, y: e.clientY }
+        setJoyAnchor(joyAnchorRef.current)
+        joystickRef.current = { active: true, x: 0, y: 0 }
         setJoystick({ active: true, x: 0, y: 0 })
         ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
         return
       }
     }
     ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-    rt.pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     // 第二根手指落下：取消单指操作，进入捏合缩放
-    if (rt.pointersRef.current.size === 2) {
-      rt.spawnPreviewRef.current = null
-      const g = rt.grabRef.current
+    if (pointersRef.current.size === 2) {
+      spawnPreviewRef.current = null
+      const g = grabRef.current
       if (g) {
-        rt.grabRef.current = null
+        grabRef.current = null
         const gb = sim.bodies.find((x) => x.id === g.id)
-        if (rt.onlineRef.current) {
+        if (onlineRef.current) {
           // 取消抓取：放回/还原速度；镜像天体解除 held（对账恢复接管）
           if (gb) gb.held = false
           if (!g.armed) net.send({ type: 'release', id: g.id, vx: g.origVx, vy: g.origVy })
@@ -122,29 +125,29 @@ export function useInput(p: Params) {
           gb.vy = g.origVy
         }
       }
-      rt.dragRef.current.active = false
-      const pts = [...rt.pointersRef.current.values()]
+      dragRef.current.active = false
+      const pts = [...pointersRef.current.values()]
       const mx = (pts[0].x + pts[1].x) / 2
       const my = (pts[0].y + pts[1].y) / 2
       const w = toWorld(mx, my)
-      rt.pinchRef.current = {
+      pinchRef.current = {
         d0: Math.max(Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), 1),
-        zoom0: rt.camRef.current.zoom,
+        zoom0: camRef.current.zoom,
         wx: w.x,
         wy: w.y,
       }
       return
     }
-    if (rt.modeRef.current === 'spawn' && e.button === 0) {
+    if (modeRef.current === 'spawn' && e.button === 0) {
       const w = toWorld(e.clientX, e.clientY)
-      rt.spawnPreviewRef.current = { active: true, sx: w.x, sy: w.y, cx: w.x, cy: w.y }
+      spawnPreviewRef.current = { active: true, sx: w.x, sy: w.y, cx: w.x, cy: w.y }
     } else if (e.button === 0) {
       // 观察模式：优先尝试抓取天体，落空则平移视野（触屏拾取半径更大）
       const w = toWorld(e.clientX, e.clientY)
-      const pickR = (e.pointerType === 'touch' ? 28 : 16) / rt.camRef.current.zoom
+      const pickR = (e.pointerType === 'touch' ? 28 : 16) / camRef.current.zoom
       const hit = sim.pick(w.x, w.y, pickR)
       if (hit) {
-        rt.grabRef.current = {
+        grabRef.current = {
           id: hit.id,
           lastX: w.x,
           lastY: w.y,
@@ -162,58 +165,58 @@ export function useInput(p: Params) {
         }
         p.setSelectedId(hit.id)
       } else {
-        rt.dragRef.current = { active: true, sx: e.clientX, sy: e.clientY, moved: false }
+        dragRef.current = { active: true, sx: e.clientX, sy: e.clientY, moved: false }
       }
     } else {
-      rt.dragRef.current = { active: true, sx: e.clientX, sy: e.clientY, moved: false }
+      dragRef.current = { active: true, sx: e.clientX, sy: e.clientY, moved: false }
     }
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
     const sim = rt.activeSimRef.current
-    if (rt.pointersRef.current.has(e.pointerId)) rt.pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     // 随手模式摇杆：相对锚点计算偏置（半径 40px 满推）
-    if (rt.joystickRef.current.active && rt.joyAnchorRef.current && rt.prefsRef.current.joyMode === 'float') {
-      const a = rt.joyAnchorRef.current
+    if (joystickRef.current.active && joyAnchorRef.current && prefsRef.current.joyMode === 'float') {
+      const a = joyAnchorRef.current
       const nx = (e.clientX - a.x) / 40
       const ny = (e.clientY - a.y) / 40
       const m = Math.min(1, Math.hypot(nx, ny))
       const ang = Math.atan2(ny, nx)
-      rt.joystickRef.current = { active: true, x: Math.cos(ang) * m, y: Math.sin(ang) * m }
-      setJoystick({ ...rt.joystickRef.current })
+      joystickRef.current = { active: true, x: Math.cos(ang) * m, y: Math.sin(ang) * m }
+      setJoystick({ ...joystickRef.current })
       return
     }
     // 双指捏合：以双指中点锚定的世界坐标为中心缩放
-    if (rt.pinchRef.current && rt.pointersRef.current.size >= 2) {
-      const pts = [...rt.pointersRef.current.values()]
+    if (pinchRef.current && pointersRef.current.size >= 2) {
+      const pts = [...pointersRef.current.values()]
       const mx = (pts[0].x + pts[1].x) / 2
       const my = (pts[0].y + pts[1].y) / 2
       const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
-      const cam = rt.camRef.current
-      const nz = Math.min(20000, Math.max(0.02, rt.pinchRef.current.zoom0 * (d / rt.pinchRef.current.d0)))
+      const cam = camRef.current
+      const nz = Math.min(20000, Math.max(0.02, pinchRef.current.zoom0 * (d / pinchRef.current.d0)))
       cam.zoom = nz
-      cam.x = rt.pinchRef.current.wx - (mx - window.innerWidth / 2) / nz
-      cam.y = rt.pinchRef.current.wy - (my - window.innerHeight / 2) / nz
+      cam.x = pinchRef.current.wx - (mx - window.innerWidth / 2) / nz
+      cam.y = pinchRef.current.wy - (my - window.innerHeight / 2) / nz
       return
     }
-    if (rt.spawnPreviewRef.current?.active) {
+    if (spawnPreviewRef.current?.active) {
       const w = toWorld(e.clientX, e.clientY)
-      rt.spawnPreviewRef.current.cx = w.x
-      rt.spawnPreviewRef.current.cy = w.y
+      spawnPreviewRef.current.cx = w.x
+      spawnPreviewRef.current.cy = w.y
       return
     }
-    const grab = rt.grabRef.current
+    const grab = grabRef.current
     if (grab) {
       const body = sim.bodies.find((b) => b.id === grab.id)
       if (!body) {
-        rt.grabRef.current = null
+        grabRef.current = null
         return
       }
       // 未越过拖动阈值：仅视为选中，天体保持原轨道运行
       if (grab.armed) {
         if (Math.hypot(e.clientX - grab.sx, e.clientY - grab.sy) < (e.pointerType === 'touch' ? 12 : 6)) return
         grab.armed = false
-        if (rt.onlineRef.current) {
+        if (onlineRef.current) {
           net.send({ type: 'grab', id: grab.id })
           body.held = true // 镜像天体挂起：对账跳过 held，抓取手感不被网络帧抢走
         } else {
@@ -234,8 +237,8 @@ export function useInput(p: Params) {
       grab.lastT = now
       const dx = w.x - body.x
       const dy = w.y - body.y
-      if (Math.abs(dx) + Math.abs(dy) > 0.5 / rt.camRef.current.zoom) grab.moved = true
-      if (rt.onlineRef.current) {
+      if (Math.abs(dx) + Math.abs(dy) > 0.5 / camRef.current.zoom) grab.moved = true
+      if (onlineRef.current) {
         // 联机：拖拽位置发服务器；镜像同步摆过去，避免等待网络帧的空窗
         net.send({ type: 'drag', id: grab.id, x: w.x, y: w.y })
         body.x = w.x
@@ -248,41 +251,41 @@ export function useInput(p: Params) {
       }
       return
     }
-    const d = rt.dragRef.current
+    const d = dragRef.current
     if (!d.active) return
     const dx = e.clientX - d.sx
     const dy = e.clientY - d.sy
     if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true
-    rt.camRef.current.x -= dx / rt.camRef.current.zoom
-    rt.camRef.current.y -= dy / rt.camRef.current.zoom
+    camRef.current.x -= dx / camRef.current.zoom
+    camRef.current.y -= dy / camRef.current.zoom
     d.sx = e.clientX
     d.sy = e.clientY
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
     const sim = rt.activeSimRef.current
-    rt.pointersRef.current.delete(e.pointerId)
+    pointersRef.current.delete(e.pointerId)
     // 随手模式摇杆松手
-    if (rt.joyAnchorRef.current) {
-      rt.joyAnchorRef.current = null
+    if (joyAnchorRef.current) {
+      joyAnchorRef.current = null
       setJoyAnchor(null)
-      rt.joystickRef.current = { active: false, x: 0, y: 0 }
+      joystickRef.current = { active: false, x: 0, y: 0 }
       setJoystick({ active: false, x: 0, y: 0 })
       return
     }
-    if (rt.pinchRef.current) {
-      if (rt.pointersRef.current.size < 2) rt.pinchRef.current = null
+    if (pinchRef.current) {
+      if (pointersRef.current.size < 2) pinchRef.current = null
       // 捏合期间不触发任何单指逻辑
-      rt.grabRef.current = null
-      rt.dragRef.current.active = false
-      rt.spawnPreviewRef.current = null
+      grabRef.current = null
+      dragRef.current.active = false
+      spawnPreviewRef.current = null
       return
     }
-    const sp = rt.spawnPreviewRef.current
+    const sp = spawnPreviewRef.current
     if (sp?.active) {
-      rt.spawnPreviewRef.current = null
+      spawnPreviewRef.current = null
       const w = toWorld(e.clientX, e.clientY)
-      const cfg = rt.spawnCfgRef.current
+      const cfg = spawnCfgRef.current
       // 飞船部署：先算自动圆轨道初速度；联机时服务器负责退役旧船/发新船
       if (cfg.kind === 'ship') {
         const host = sim.dominantMassive(sp.sx, sp.sy)
@@ -291,7 +294,7 @@ export function useInput(p: Params) {
         if (host && Math.hypot(sp.sx - host.x, sp.sy - host.y) > host.radius * 2) {
           ;({ vx: svx, vy: svy } = circularOrbitVelocity(sim.config.G, host, sp.sx, sp.sy))
         }
-        if (rt.onlineRef.current) {
+        if (onlineRef.current) {
           net.send({ type: 'spawn', kind: 'ship', x: sp.sx, y: sp.sy, vx: svx, vy: svy, mass: 0.001 })
           p.setSelectedId(null)
         } else {
@@ -308,7 +311,7 @@ export function useInput(p: Params) {
       let vx = (w.x - sp.sx) * V_SCALE
       let vy = (w.y - sp.sy) * V_SCALE
       // 拖拽位移（屏幕像素）：拉了明显一段虚线就用拖拽速度——拖拽意图优先于自动圆轨道
-      const dragPx = Math.hypot(w.x - sp.sx, w.y - sp.sy) * rt.camRef.current.zoom
+      const dragPx = Math.hypot(w.x - sp.sx, w.y - sp.sy) * camRef.current.zoom
       const dragged = dragPx > 12
       if (cfg.autoOrbit && !dragged) {
         const host = sim.dominantMassive(sp.sx, sp.sy)
@@ -322,7 +325,7 @@ export function useInput(p: Params) {
       const useBoost = rt.unitsRef.current != null
       const kind = kindForMass(cfg.mass) // 类型由质量唯一决定（滑杆状态只是 UI 缓存）
       const visBoost = useBoost ? Math.max(1, Math.min(15, 24 / Math.max(1, radiusFor(kind, cfg.mass)))) : undefined
-      if (rt.onlineRef.current) {
+      if (onlineRef.current) {
         net.send({ type: 'spawn', kind, x: sp.sx, y: sp.sy, vx, vy, mass: cfg.mass, visBoost })
         return
       }
@@ -332,11 +335,11 @@ export function useInput(p: Params) {
       p.setSelectedId(body.id)
       return
     }
-    const grab = rt.grabRef.current
+    const grab = grabRef.current
     if (grab) {
-      rt.grabRef.current = null
+      grabRef.current = null
       const body = sim.bodies.find((b) => b.id === grab.id)
-      if (rt.onlineRef.current) {
+      if (onlineRef.current) {
         if (body) body.held = false // 松手：对账恢复接管该天体
         if (!grab.armed) {
           // 甩出（或放回）：把最终速度交服务器
@@ -378,20 +381,20 @@ export function useInput(p: Params) {
       }
       return
     }
-    const d = rt.dragRef.current
+    const d = dragRef.current
     if (!d.active) return
     d.active = false
     if (!d.moved) {
       // 点击拾取
       const w = toWorld(e.clientX, e.clientY)
-      const hit = sim.pick(w.x, w.y, 14 / rt.camRef.current.zoom)
+      const hit = sim.pick(w.x, w.y, 14 / camRef.current.zoom)
       p.setSelectedId(hit ? hit.id : null)
       if (!hit) p.setFollow(false)
     }
   }
 
   const onWheel = (e: React.WheelEvent) => {
-    const cam = rt.camRef.current
+    const cam = camRef.current
     const factor = Math.pow(1.0015, -e.deltaY)
     const nz = Math.min(20000, Math.max(0.02, cam.zoom * factor))
     const w = toWorld(e.clientX, e.clientY)
