@@ -59,6 +59,10 @@ function drawStarLayer(ctx: CanvasRenderingContext2D, stars: StarDot[], w: numbe
 // —— 光晕精灵缓存：每色只生成一次，drawImage 比逐帧径向渐变快一个数量级 ——
 const glowSprites = new Map<string, HTMLCanvasElement>()
 
+/** 星空视差用增量累积：绝对值 offset = cam.x * k * zoom 在追踪/变倍时会剧烈跳变
+ *  （整片星空每帧乱跳=「背景闪」）。改为只对每帧的屏幕位移做视差，传送/缩放零扰动 */
+const starParallax = { x: 0, y: 0, prevX: 0, prevY: 0, init: false }
+
 /** 暗角渐变按 (ctx, w, h) 缓存——每帧新建径向渐变是纯浪费 */
 const vignetteCache = new WeakMap<CanvasRenderingContext2D, { w: number; h: number; grad: CanvasGradient }>()
 function getVignette(ctx: CanvasRenderingContext2D, w: number, h: number): CanvasGradient {
@@ -117,8 +121,20 @@ export function draw(
   ctx.fillStyle = getVignette(ctx, w, h)
   ctx.fillRect(0, 0, w, h)
 
-  drawStarLayer(ctx, starfield.far, w, h, cam.x * 0.04 * cam.zoom, cam.y * 0.04 * cam.zoom)
-  drawStarLayer(ctx, starfield.near, w, h, cam.x * 0.12 * cam.zoom, cam.y * 0.12 * cam.zoom)
+  // 帧间屏幕位移 → 星空视差（单帧钳幅，防传送/切预设时甩动）
+  if (!starParallax.init) {
+    starParallax.prevX = cam.x
+    starParallax.prevY = cam.y
+    starParallax.init = true
+  }
+  const dxScreen = Math.max(-60, Math.min(60, (cam.x - starParallax.prevX) * cam.zoom))
+  const dyScreen = Math.max(-60, Math.min(60, (cam.y - starParallax.prevY) * cam.zoom))
+  starParallax.prevX = cam.x
+  starParallax.prevY = cam.y
+  starParallax.x += dxScreen
+  starParallax.y += dyScreen
+  drawStarLayer(ctx, starfield.far, w, h, starParallax.x * 0.04, starParallax.y * 0.04)
+  drawStarLayer(ctx, starfield.near, w, h, starParallax.x * 0.12, starParallax.y * 0.12)
 
   ctx.save()
   ctx.translate(w / 2, h / 2)
