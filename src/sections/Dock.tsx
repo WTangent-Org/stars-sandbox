@@ -35,6 +35,9 @@ interface Props {
   // —— 存档 ——
   saves: SaveMeta[]
   saveMsg: string
+  /** 自动存档摘要（列表首行） */
+  autosaveMeta?: { savedAt: number; bodies: number; preset?: string } | null
+  onLoadAutosave: () => void
   onSaveCurrent: () => void
   onLoadSave: (id: string) => void
   onDeleteSave: (id: string) => void
@@ -161,6 +164,22 @@ export default function Dock(p: Props) {
             >
               ⬇ 保存当前宇宙
             </button>
+            {p.autosaveMeta && (
+              <div className="rounded border border-[#34d399]/30 px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-[11.5px] text-[#34d399]">自动存档</span>
+                  <span className="shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">
+                    {new Date(p.autosaveMeta.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+                <button
+                  onClick={p.onLoadAutosave}
+                  className="mt-1 w-full rounded border border-[#34d399]/40 px-1 py-0.5 text-[10px] text-[#34d399] hover:bg-[#34d399]/10"
+                >
+                  载入
+                </button>
+              </div>
+            )}
             {p.saves.length === 0 ? (
               <p className="text-[10px] text-[#5b6b8c]/60">每 30 秒自动保存一次，下次打开自动恢复。</p>
             ) : (

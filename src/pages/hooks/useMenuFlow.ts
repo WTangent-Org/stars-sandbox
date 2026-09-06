@@ -3,9 +3,9 @@
  */
 import { useCallback, useState } from 'react'
 import { loadPreset, PRESETS } from '../../sim/presets'
-import { getSave } from '../../sim/saveStore'
+import { getAutosave, getSave } from '../../sim/saveStore'
 import { Simulation } from '../../sim/engine'
-import type { PresetId, UnitProfile } from '../../sim/types'
+import type { PresetId, UnitProfile, WorldState } from '../../sim/types'
 import type { AutosaveInfo } from '../../sections/MainMenu'
 import type { Rt } from '../rt'
 
@@ -69,6 +69,53 @@ export function useMenuFlow(p: Params) {
     p.rerender()
   }, [p])
 
+  /** 恢复一份世界状态（相机优先用存档值；预设合法时恢复单位换算） */
+  const restoreState = useCallback(
+    (state: WorldState) => {
+      localSim.restoreWorld(state)
+      baseTimeScaleRef.current = state.config.timeScale
+      const pid = state.preset
+      if (pid && PRESETS.some((pr) => pr.id === pid)) {
+        const probe = new Simulation()
+        const { zoom, units: u } = loadPreset(probe, pid as PresetId)
+        camRef.current = state.camera ?? { x: 0, y: 0, zoom }
+        rt.unitsRef.current = u
+        p.setUnits(u)
+        p.setCurrentPreset(pid as PresetId)
+      } else {
+        camRef.current = state.camera ?? { x: 0, y: 0, zoom: 1 }
+        rt.unitsRef.current = undefined
+        p.setUnits(undefined)
+        p.setCurrentPreset('empty')
+      }
+      p.setSelectedId(null)
+      p.setFollow(false)
+      future.invalidate()
+    },
+    [localSim, future, rt, p],
+  )
+
+  /** 载入自动存档（列表首行「自动存档」） */
+  const loadAutosave = useCallback(
+    async () => {
+      userTouchedRef.current = true
+      try {
+        const rec = await getAutosave()
+        if (!rec) {
+          p.showSaveMsg('还没有自动存档，先玩一会儿吧')
+          return
+        }
+        restoreState(rec.state)
+        p.saveAutosave()
+        setScreen('game')
+        p.rerender()
+      } catch (e) {
+        p.showSaveMsg(`载入失败：${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+    [rt, p, restoreState],
+  )
+
   /** 主菜单：载入本地世界 */
   const loadSaveFromMenu = useCallback(
     async (id: string) => {
@@ -79,25 +126,7 @@ export function useMenuFlow(p: Params) {
           p.showSaveMsg('存档不存在')
           return
         }
-        localSim.restoreWorld(rec.state)
-        baseTimeScaleRef.current = rec.state.config.timeScale
-        const pid = rec.state.preset
-        if (pid && PRESETS.some((pr) => pr.id === pid)) {
-          const probe = new Simulation()
-          const { zoom, units: u } = loadPreset(probe, pid as PresetId)
-          camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom }
-          rt.unitsRef.current = u
-          p.setUnits(u)
-          p.setCurrentPreset(pid as PresetId)
-        } else {
-          camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom: 1 }
-          rt.unitsRef.current = undefined
-          p.setUnits(undefined)
-          p.setCurrentPreset('empty')
-        }
-        p.setSelectedId(null)
-        p.setFollow(false)
-        future.invalidate()
+        restoreState(rec.state)
         p.saveAutosave()
         setScreen('game')
         p.rerender()
@@ -105,8 +134,8 @@ export function useMenuFlow(p: Params) {
         p.showSaveMsg(`载入失败：${e instanceof Error ? e.message : String(e)}`)
       }
     },
-    [localSim, future, rt, p],
+    [localSim, rt, p, restoreState],
   )
 
-  return { screen, setScreen, menuOpen, setMenuOpen, autosaveInfo, setAutosaveInfo, startLocalWorld, exitToMenu, loadSaveFromMenu }
+  return { screen, setScreen, menuOpen, setMenuOpen, autosaveInfo, setAutosaveInfo, startLocalWorld, exitToMenu, loadSaveFromMenu, loadAutosave }
 }

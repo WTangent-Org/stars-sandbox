@@ -12,6 +12,8 @@ export interface AutosaveInfo {
 
 interface Props {
   autosave: AutosaveInfo | null
+  autosaveMeta?: { savedAt: number; bodies: number; preset?: string } | null
+  onLoadAutosave: () => void
   saves: SaveMeta[]
   onContinue: () => void
   onNewWorld: (preset: PresetId) => void
@@ -94,12 +96,29 @@ export default function MainMenu(p: Props) {
                 导入 .json
               </button>
             </div>
-            {p.saves.length === 0 ? (
-              <p className="rounded-md border border-[#1a2540] px-3 py-6 text-center text-[11px] text-[#5b6b8c]/60">
-                还没有本地世界。游戏内会每 30 秒自动保存；也可以在游戏菜单里手动保存。
-              </p>
-            ) : (
-              <div className="mg-scroll max-h-[46vh] space-y-1.5 overflow-y-auto pr-1">
+            <div className="mg-scroll max-h-[46vh] space-y-1.5 overflow-y-auto pr-1">
+              {p.autosaveMeta && (
+                  <div className="rounded border border-[#34d399]/30 px-2 py-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="truncate text-[12.5px] text-[#34d399]">自动存档</span>
+                      <span className="ml-2 shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">
+                        {new Date(p.autosaveMeta.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 font-mono text-[9px] text-[#5b6b8c]/50">{p.autosaveMeta.bodies} 天体</div>
+                    <button
+                      onClick={p.onLoadAutosave}
+                      className="mt-1 w-full rounded border border-[#34d399]/40 px-1.5 py-1 text-[10.5px] text-[#34d399] hover:bg-[#34d399]/10"
+                    >
+                      进入世界
+                    </button>
+                  </div>
+                )}
+                {p.saves.length === 0 && !p.autosaveMeta && (
+                  <p className="rounded-md border border-[#1a2540] px-3 py-6 text-center text-[11px] text-[#5b6b8c]/60">
+                    还没有本地世界。游戏内会每 30 秒自动保存；也可以手动保存。
+                  </p>
+                )}
                 {p.saves.map((s) => (
                   <div key={s.id} className="rounded border border-[#1a2540] px-2.5 py-2">
                     <div className="flex items-center justify-between">
@@ -134,7 +153,6 @@ export default function MainMenu(p: Props) {
                   </div>
                 ))}
               </div>
-            )}
           </div>
         )}
 

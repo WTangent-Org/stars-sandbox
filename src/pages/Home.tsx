@@ -40,7 +40,7 @@ export default function Home() {
 
   // —— 存档库（含自动保存与提示语） ——
   const [autosaveInfo, setAutosaveInfo] = useState<AutosaveInfo | null>(null)
-  const { saves, saveMsg, showSaveMsg, saveAutosave, onSaveCurrent, onDeleteSave, onExportSave, onImportSave } =
+  const { saves, autosaveMeta, saveMsg, showSaveMsg, saveAutosave, onSaveCurrent, onDeleteSave, onExportSave, onImportSave } =
     useSaves({ rt, localSim, setAutosaveInfo })
 
   // —— 选中状态（单一来源在 Home；交互/菜单 hooks 都可能复位它） ——
@@ -51,7 +51,7 @@ export default function Home() {
 
   // —— 主菜单 / 游戏菜单流程 ——
   const menu = useMenuFlow({ rt, rerender, saveAutosave, showSaveMsg, setUnits, setCurrentPreset, setSelectedId, setFollow, setAutosaveInfo })
-  const { screen, setScreen, menuOpen, setMenuOpen, startLocalWorld, exitToMenu, loadSaveFromMenu } = menu
+  const { screen, setScreen, menuOpen, setMenuOpen, startLocalWorld, exitToMenu, loadSaveFromMenu, loadAutosave } = menu
 
   // —— 世界级操作 ——
   const [warp, setWarp] = useState(1)
@@ -153,6 +153,8 @@ export default function Home() {
               saves={saves}
               saveMsg={saveMsg}
               onSaveCurrent={() => void onSaveCurrent()}
+              autosaveMeta={autosaveMeta}
+              onLoadAutosave={() => void loadAutosave()}
               onLoadSave={(id) => void loadSaveFromMenu(id)}
               onDeleteSave={(id) => void onDeleteSave(id)}
               onExportSave={(id) => void onExportSave(id)}
@@ -294,6 +296,8 @@ export default function Home() {
       {screen === 'menu' && (
         <MainMenu
           autosave={autosaveInfo}
+          autosaveMeta={autosaveMeta}
+          onLoadAutosave={() => void loadAutosave()}
           saves={saves}
           onContinue={() => setScreen('game')}
           onNewWorld={startLocalWorld}

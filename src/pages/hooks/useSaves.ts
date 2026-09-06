@@ -1,13 +1,19 @@
 /**
- * 本地存档库：槽位 CRUD / 导入导出 / 30 秒自动保存（含相机视野）。
- * 联机时自动保存不覆盖本地槽位（权威在房间）。
+ * 本地存档库：自动存档 + 槽位 CRUD / 导入导出。全部存在浏览器 IndexedDB（本地，非 cookie）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Simulation } from '../../sim/engine'
 import { exportSaveFile, importSaveFile } from '../../sim/saveFile'
-import { deleteSave, getSave, listSaves, putAutosave, putSave, type SaveMeta } from '../../sim/saveStore'
+import { deleteSave, getAutosave, getSave, listSaves, putAutosave, putSave, type SaveMeta } from '../../sim/saveStore'
 import type { AutosaveInfo } from '../../sections/MainMenu'
 import type { Rt } from '../rt'
+
+/** 自动存档摘要（列表首行展示用） */
+export interface AutosaveMeta {
+  savedAt: number
+  bodies: number
+  preset?: string
+}
 
 interface Params {
   rt: Rt
@@ -18,6 +24,7 @@ interface Params {
 export function useSaves(p: Params) {
   const { rt } = p
   const [saves, setSaves] = useState<SaveMeta[]>([])
+  const [autosaveMeta, setAutosaveMeta] = useState<AutosaveMeta | null>(null)
   const [saveMsg, setSaveMsg] = useState('')
   const saveMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -36,22 +43,33 @@ export function useSaves(p: Params) {
     }
   }, [])
 
-  /** 自动存档：把当前离线宇宙（含相机）写进 IndexedDB 单一槽位，启动时恢复 */
-  const saveAutosave = useCallback(() => {
+  /** 同步自动存档摘要（世界页列表首行展示） */
+  const refreshAutosave = useCallback(async () => {
+    try {
+      const rec = await getAutosave()
+      setAutosaveMeta(rec ? { savedAt: rec.savedAt, bodies: rec.state.bodies.length, preset: rec.state.preset } : null)
+    } catch {
+      setAutosaveMeta(null)
+    }
+  }, [])
+
+  /** 自动存档：把当前宇宙（含相机）写进 IndexedDB 单一槽位，启动时恢复 */
+  const saveAutosave = useCallback(async () => {
     try {
       const state = p.localSim.serialize(rt.currentPresetRef.current)
       state.camera = { ...rt.camRef.current }
-      void putAutosave(state)
+      await putAutosave(state)
+      setAutosaveMeta({ savedAt: Date.now(), bodies: state.bodies.length, preset: state.preset })
     } catch {
       /* IndexedDB 不可用时静默 */
     }
   }, [rt, p.localSim])
 
   useEffect(() => {
-    const t = setInterval(saveAutosave, 30000)
-    const onHide = () => saveAutosave()
+    const t = setInterval(() => void saveAutosave(), 30000)
+    const onHide = () => void saveAutosave()
     const onVis = () => {
-      if (document.visibilityState === 'hidden') saveAutosave()
+      if (document.visibilityState === 'hidden') void saveAutosave()
     }
     window.addEventListener('pagehide', onHide)
     document.addEventListener('visibilitychange', onVis)
@@ -59,14 +77,15 @@ export function useSaves(p: Params) {
       clearInterval(t)
       window.removeEventListener('pagehide', onHide)
       document.removeEventListener('visibilitychange', onVis)
-      saveAutosave()
+      void saveAutosave()
     }
   }, [saveAutosave])
 
-  // —— 挂载时拉一次存档列表 ——
+  // —— 挂载时拉一次存档列表与自动存档摘要 ——
   useEffect(() => {
     void refreshSaves()
-  }, [refreshSaves])
+    void refreshAutosave()
+  }, [refreshSaves, refreshAutosave])
 
   const onSaveCurrent = async () => {
     try {
@@ -110,5 +129,17 @@ export function useSaves(p: Params) {
     }
   }
 
-  return { saves, saveMsg, showSaveMsg, refreshSaves, saveAutosave, onSaveCurrent, onDeleteSave, onExportSave, onImportSave }
+  return {
+    saves,
+    autosaveMeta,
+    refreshAutosave,
+    saveMsg,
+    showSaveMsg,
+    refreshSaves,
+    saveAutosave,
+    onSaveCurrent,
+    onDeleteSave,
+    onExportSave,
+    onImportSave,
+  }
 }
