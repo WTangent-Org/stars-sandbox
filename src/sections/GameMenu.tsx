@@ -1,8 +1,5 @@
 /** 游戏内菜单（右上 ☰）：只管「会话级」动作——保存/开放都在 Dock 世界页，不重复。 */
 interface Props {
-  online: boolean
-  isHost: boolean
-  room: string
   saveMsg: string
   onResume: () => void
   onExitToMenu: () => void
@@ -21,9 +18,7 @@ export default function GameMenu(p: Props) {
           </button>
           <button onClick={p.onExitToMenu} className={`${btn} border-[#f87171]/30 text-[#f87171]/90 hover:border-[#f87171]/60`}>
             ⏏ 保存并退出到主菜单
-            <span className="mt-0.5 block text-[10px] text-[#5b6b8c]/70">
-              {p.online && p.isHost ? `你是房主（房间 ${p.room}）：房间将解散，宇宙回到你的本地世界` : '宇宙自动保存到本机'}
-            </span>
+            <span className="mt-0.5 block text-[10px] text-[#5b6b8c]/70">宇宙自动保存到本机</span>
           </button>
         </div>
         <p className="mt-3 text-center font-mono text-[10px] text-[#5b6b8c]/70">

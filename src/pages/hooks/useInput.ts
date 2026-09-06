@@ -16,7 +16,6 @@ interface Params {
   togglePause: () => void
   /** 联机有主房里非房主的全局操作会被服务器拒绝；这里只管本地路径 */
   localSim: Rt['localSim']
-  net: Rt['net']
   future: Rt['future']
   /** 状态单一来源在 Home：交互层只读写 */
   mode: ToolMode
@@ -30,8 +29,8 @@ interface Params {
 
 export function useInput(p: Params) {
   const { rt } = p
-  const { net, localSim, future, togglePause, rerender, mode, spawnCfg, selectedId, follow, setSelectedId, setFollow } = p
-  const { modeRef, spawnCfgRef, selectedRef, followRef, spawnPreviewRef, camRef, dragRef, grabRef, keysRef, joystickRef, joyAnchorRef, pointersRef, pinchRef, prefsRef, onlineRef } = rt
+  const { localSim, future, togglePause, rerender, mode, spawnCfg, selectedId, follow, setSelectedId, setFollow } = p
+  const { modeRef, spawnCfgRef, selectedRef, followRef, spawnPreviewRef, camRef, dragRef, grabRef, keysRef, joystickRef, joyAnchorRef, pointersRef, pinchRef, prefsRef } = rt
   const [joystick, setJoystick] = useState({ active: false, x: 0, y: 0 })
   const [joyAnchor, setJoyAnchor] = useState<{ x: number; y: number } | null>(null)
 
@@ -61,21 +60,16 @@ export function useInput(p: Params) {
         e.preventDefault()
         togglePause()
       } else if (e.key === 't' || e.key === 'T') {
-        // 轨迹是纯本地渲染层行为：本地与镜像两个配置都写，保持同步
+        // 轨迹是纯本地渲染层行为
         localSim.config.trails = !localSim.config.trails
-        net.mirror.config.trails = localSim.config.trails
         rerender()
       } else if (e.key === 'Escape') {
         setSelectedId(null)
         p.setFollow(false)
         spawnPreviewRef.current = null
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRef.current != null) {
-        if (onlineRef.current) {
-          net.send({ type: 'remove', id: selectedRef.current })
-        } else {
-          localSim.removeBody(selectedRef.current)
-          future.invalidate()
-        }
+        localSim.removeBody(selectedRef.current)
+        future.invalidate()
         setSelectedId(null)
       }
     }
@@ -86,11 +80,11 @@ export function useInput(p: Params) {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [net, localSim, future, rt, togglePause, rerender, setSelectedId, setFollow])
+  }, [localSim, future, rt, togglePause, rerender, setSelectedId, setFollow])
 
   // —— 指针交互 ——
   const onPointerDown = (e: React.PointerEvent) => {
-    const sim = rt.activeSimRef.current
+    const sim = localSim
     if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1) return
     // 随手模式：触屏落在摇杆侧半屏 → 该触点即摇杆中心，优先于平移/拾取
     if (e.pointerType === 'touch' && prefsRef.current.joyMode === 'float' && pointersRef.current.size === 0) {
@@ -116,11 +110,7 @@ export function useInput(p: Params) {
       if (g) {
         grabRef.current = null
         const gb = sim.bodies.find((x) => x.id === g.id)
-        if (onlineRef.current) {
-          // 取消抓取：放回/还原速度；镜像天体解除 held（对账恢复接管）
-          if (gb) gb.held = false
-          if (!g.armed) net.send({ type: 'release', id: g.id, vx: g.origVx, vy: g.origVy })
-        } else if (gb && !g.armed) {
+        if (gb && !g.armed) {
           gb.held = false
           gb.x = g.origX
           gb.y = g.origY
@@ -176,7 +166,7 @@ export function useInput(p: Params) {
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
-    const sim = rt.activeSimRef.current
+    const sim = localSim
     if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     // 随手模式摇杆：相对锚点计算偏置（半径 40px 满推）
     if (joystickRef.current.active && joyAnchorRef.current && prefsRef.current.joyMode === 'float') {
@@ -219,13 +209,8 @@ export function useInput(p: Params) {
       if (grab.armed) {
         if (Math.hypot(e.clientX - grab.sx, e.clientY - grab.sy) < (e.pointerType === 'touch' ? 12 : 6)) return
         grab.armed = false
-        if (onlineRef.current) {
-          net.send({ type: 'grab', id: grab.id })
-          body.held = true // 镜像天体挂起：对账跳过 held，抓取手感不被网络帧抢走
-        } else {
-          body.held = true
-          future.invalidate() // 拖拽开始，旧未来作废
-        }
+        body.held = true
+        future.invalidate() // 拖拽开始，旧未来作废
       }
       const w = toWorld(e.clientX, e.clientY)
       const now = performance.now()
@@ -241,17 +226,10 @@ export function useInput(p: Params) {
       const dx = w.x - body.x
       const dy = w.y - body.y
       if (Math.abs(dx) + Math.abs(dy) > 0.5 / camRef.current.zoom) grab.moved = true
-      if (onlineRef.current) {
-        // 联机：拖拽位置发服务器；镜像同步摆过去，避免等待网络帧的空窗
-        net.send({ type: 'drag', id: grab.id, x: w.x, y: w.y })
-        body.x = w.x
-        body.y = w.y
-      } else {
-        body.x = w.x
-        body.y = w.y
-        body.vx = 0
-        body.vy = 0
-      }
+      body.x = w.x
+      body.y = w.y
+      body.vx = 0
+      body.vy = 0
       return
     }
     const d = dragRef.current
@@ -266,7 +244,7 @@ export function useInput(p: Params) {
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
-    const sim = rt.activeSimRef.current
+    const sim = localSim
     pointersRef.current.delete(e.pointerId)
     // 随手模式摇杆松手
     if (joyAnchorRef.current) {
@@ -289,7 +267,7 @@ export function useInput(p: Params) {
       spawnPreviewRef.current = null
       const w = toWorld(e.clientX, e.clientY)
       const cfg = spawnCfgRef.current
-      // 飞船部署：先算自动圆轨道初速度；联机时服务器负责退役旧船/发新船
+      // 飞船部署：先算自动圆轨道初速度
       if (cfg.kind === 'ship') {
         const host = sim.dominantMassive(sp.sx, sp.sy)
         let svx = 0
@@ -297,17 +275,12 @@ export function useInput(p: Params) {
         if (host && Math.hypot(sp.sx - host.x, sp.sy - host.y) > host.radius * 2) {
           ;({ vx: svx, vy: svy } = circularOrbitVelocity(sim.config.G, host, sp.sx, sp.sy))
         }
-        if (onlineRef.current) {
-          net.send({ type: 'spawn', kind: 'ship', x: sp.sx, y: sp.sy, vx: svx, vy: svy, mass: 0.001 })
-          setSelectedId(null)
-        } else {
-          // 全场唯一：先退役旧飞船
-          for (const s of sim.bodies.filter((b) => b.kind === 'ship')) sim.removeBody(s.id)
-          const shipBody = sim.addBody({ kind: 'ship', x: sp.sx, y: sp.sy, vx: svx, vy: svy, mass: 0.001 })
-          future.invalidate()
-          sim.addEffect(sp.sx, sp.sy, shipBody.radius * 3 + 4, '#34d399', 'spawn')
-          p.setSelectedId(shipBody.id)
-        }
+        // 全场唯一：先退役旧飞船
+        for (const s of sim.bodies.filter((b) => b.kind === 'ship')) sim.removeBody(s.id)
+        const shipBody = sim.addBody({ kind: 'ship', x: sp.sx, y: sp.sy, vx: svx, vy: svy, mass: 0.001 })
+        future.invalidate()
+        sim.addEffect(sp.sx, sp.sy, shipBody.radius * 3 + 4, '#34d399', 'spawn')
+        p.setSelectedId(shipBody.id)
         p.setMode('pan') // 部署完即回观察模式，直接开飞
         return
       }
@@ -328,10 +301,6 @@ export function useInput(p: Params) {
       const useBoost = rt.unitsRef.current != null
       const kind = kindForMass(cfg.mass) // 类型由质量唯一决定（滑杆状态只是 UI 缓存）
       const visBoost = useBoost ? Math.max(1, Math.min(15, 24 / Math.max(1, radiusFor(kind, cfg.mass)))) : undefined
-      if (onlineRef.current) {
-        net.send({ type: 'spawn', kind, x: sp.sx, y: sp.sy, vx, vy, mass: cfg.mass, visBoost })
-        return
-      }
       const body = sim.addBody({ kind, x: sp.sx, y: sp.sy, vx, vy, mass: cfg.mass, visBoost })
       future.invalidate() // 新天体加入，分叉重算
       sim.addEffect(sp.sx, sp.sy, body.radius * 3 + 4, '#22d3ee', 'spawn')
@@ -342,23 +311,6 @@ export function useInput(p: Params) {
     if (grab) {
       grabRef.current = null
       const body = sim.bodies.find((b) => b.id === grab.id)
-      if (onlineRef.current) {
-        if (body) body.held = false // 松手：对账恢复接管该天体
-        if (!grab.armed) {
-          // 甩出（或放回）：把最终速度交服务器
-          if (grab.moved) {
-            const cap = 80
-            const mag = Math.hypot(grab.vx, grab.vy)
-            const k = mag > cap ? cap / mag : 1
-            net.send({ type: 'release', id: grab.id, vx: grab.vx * k, vy: grab.vy * k })
-          } else {
-            net.send({ type: 'release', id: grab.id, vx: grab.origVx, vy: grab.origVy })
-            net.send({ type: 'drag', id: grab.id, x: grab.origX, y: grab.origY })
-            net.send({ type: 'release', id: grab.id, vx: grab.origVx, vy: grab.origVy })
-          }
-        }
-        return
-      }
       if (body) {
         body.held = false
         if (grab.armed) {

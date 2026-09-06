@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { PRESETS } from '../sim/presets'
 import type { PresetId } from '../sim/types'
 import type { SaveMeta } from '../sim/saveStore'
-import ModeList from './ModeList'
 
 /** 自动存档摘要（主菜单「继续游戏」副标题） */
 export interface AutosaveInfo {
@@ -14,26 +13,20 @@ export interface AutosaveInfo {
 interface Props {
   autosave: AutosaveInfo | null
   saves: SaveMeta[]
-  /** 上次进入的房间号（localStorage 持久化）：多人页一键直达 */
-  lastRoom?: string
-  /** 新建房间：把当前宇宙开成联机房（离线时自动先连服务器） */
-  onNewRoom: () => void
   onContinue: () => void
   onNewWorld: (preset: PresetId) => void
   onLoadSave: (id: string) => void
   onDeleteSave: (id: string) => void
   onExportSave: (id: string) => void
   onImportSave: () => void
-  onJoinMultiplayer: (roomCode: string) => void
 }
 
-type Section = 'main' | 'worlds' | 'multi'
+type Section = 'main' | 'worlds'
 
 /** MC 风格主菜单：世界（存档）是一级入口，本地与多人分列 */
 export default function MainMenu(p: Props) {
   const [section, setSection] = useState<Section>('main')
   const [newWorldOpen, setNewWorldOpen] = useState(false)
-  const [roomInput, setRoomInput] = useState('')
 
   const back = () => {
     setSection('main')
@@ -85,10 +78,6 @@ export default function MainMenu(p: Props) {
                 {p.saves.length > 0 ? `${p.saves.length} 个存档` : '载入存档 / 导入导出 .json'}
               </span>
             </button>
-            <button onClick={() => setSection('multi')} className={bigBtn}>
-              ⇄ 多人游戏
-              <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">连接服务器 · 公共大厅或房号私房</span>
-            </button>
           </div>
         )}
 
@@ -110,62 +99,45 @@ export default function MainMenu(p: Props) {
                 还没有本地世界。游戏内会每 30 秒自动保存；也可以在游戏菜单里手动保存。
               </p>
             ) : (
-              <div className="mg-scroll max-h-[46vh] overflow-y-auto pr-1">
-                <ModeList rooms={[]} saves={p.saves} onLoadSave={p.onLoadSave} onDeleteSave={p.onDeleteSave} onExportSave={p.onExportSave} onJoinRoom={() => {}} />
+              <div className="mg-scroll max-h-[46vh] space-y-1.5 overflow-y-auto pr-1">
+                {p.saves.map((s) => (
+                  <div key={s.id} className="rounded border border-[#1a2540] px-2.5 py-2">
+                    <div className="flex items-center justify-between">
+                      <span className="truncate text-[12.5px] text-[#dbe4f3]/90">{s.name}</span>
+                      <span className="ml-2 shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">
+                        {new Date(s.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 font-mono text-[9px] text-[#5b6b8c]/50">
+                      {s.bodies} 天体{s.preset ? ` · ${PRESETS.find((pr) => pr.id === s.preset)?.label ?? s.preset}` : ''}
+                    </div>
+                    <div className="mt-1.5 flex gap-1.5">
+                      <button
+                        onClick={() => p.onLoadSave(s.id)}
+                        className="flex-1 rounded border border-[#22d3ee]/40 px-1.5 py-1 text-[10.5px] text-[#22d3ee] hover:bg-[#22d3ee]/10"
+                      >
+                        进入世界
+                      </button>
+                      <button
+                        onClick={() => p.onExportSave(s.id)}
+                        className="flex-1 rounded border border-[#1a2540] px-1.5 py-1 text-[10.5px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35"
+                      >
+                        导出
+                      </button>
+                      <button
+                        onClick={() => p.onDeleteSave(s.id)}
+                        className="flex-1 rounded border border-[#f87171]/25 px-1.5 py-1 text-[10.5px] text-[#f87171]/80 hover:border-[#f87171]/50"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
         )}
 
-        {section === 'multi' && (
-          <div className="mt-5 space-y-3">
-            <button onClick={back} className="font-mono text-[11px] text-[#5b6b8c] hover:text-[#dbe4f3]">
-              ← 返回
-            </button>
-            <button
-              onClick={() => p.onJoinMultiplayer('')}
-              className="w-full rounded-md border border-[#34d399]/50 bg-[#34d399]/10 px-4 py-2.5 text-left text-[13px] text-[#34d399] hover:bg-[#34d399]/20"
-            >
-              🌐 进入公共大厅
-            </button>
-            <button
-              onClick={p.onNewRoom}
-              className="w-full rounded-md border border-[#22d3ee]/40 bg-[#22d3ee]/10 px-4 py-2.5 text-left text-[13px] text-[#22d3ee] hover:bg-[#22d3ee]/20"
-            >
-              ＋ 新建房间
-              <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">把当前宇宙开成联机房，你成为房主</span>
-            </button>
-            {p.lastRoom && (
-              <button
-                onClick={() => p.onJoinMultiplayer(p.lastRoom!)}
-                className="w-full rounded-md border border-[#5b6b8c]/40 bg-[#0c1220]/60 px-4 py-2.5 text-left text-[12px] text-[#dbe4f3]/85 hover:border-[#22d3ee]/40"
-              >
-                ↩ 回到上次房间「{p.lastRoom}」
-              </button>
-            )}
-            <div className="space-y-1.5">
-              <span className="mg-label">房间号</span>
-              <input
-                className="w-full rounded border border-[#1a2540] bg-[#0c1220] px-3 py-2 font-mono text-[12px] text-[#dbe4f3] outline-none focus:border-[#22d3ee]/50"
-                placeholder="留空 = 公共大厅"
-                value={roomInput}
-                onChange={(e) => setRoomInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') p.onJoinMultiplayer(roomInput.trim())
-                }}
-              />
-            </div>
-            <button
-              onClick={() => p.onJoinMultiplayer(roomInput.trim())}
-              className="w-full rounded-md border border-[#22d3ee]/50 bg-[#22d3ee]/10 px-4 py-2.5 text-[13px] text-[#22d3ee] hover:bg-[#22d3ee]/20"
-            >
-              ⇄ 连接服务器
-            </button>
-            <p className="text-[10px] leading-relaxed text-[#5b6b8c]">
-              连接本网页同一服务器的联机大厅；朋友开放宇宙到局域网后，把房号填在这里即可加入。进房后你使用的宇宙以房间为准；退出后回到你自己的本地世界。
-            </p>
-          </div>
-        )}
       </div>
     </div>
   )

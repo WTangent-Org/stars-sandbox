@@ -4,7 +4,6 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Simulation } from '../../sim/engine'
-import type { NetSim } from '../../sim/net'
 import { exportSaveFile, importSaveFile } from '../../sim/saveFile'
 import { deleteSave, getSave, listSaves, putAutosave, putSave, type SaveMeta } from '../../sim/saveStore'
 import type { AutosaveInfo } from '../../sections/MainMenu'
@@ -13,7 +12,6 @@ import type { Rt } from '../rt'
 interface Params {
   rt: Rt
   localSim: Simulation
-  net: NetSim
   setAutosaveInfo: (info: AutosaveInfo | null) => void
 }
 
@@ -40,7 +38,6 @@ export function useSaves(p: Params) {
 
   /** 自动存档：把当前离线宇宙（含相机）写进 IndexedDB 单一槽位，启动时恢复 */
   const saveAutosave = useCallback(() => {
-    if (rt.onlineRef.current) return // 联机时权威在房间，不覆盖本地自动存档
     try {
       const state = p.localSim.serialize(rt.currentPresetRef.current)
       state.camera = { ...rt.camRef.current }
@@ -73,8 +70,8 @@ export function useSaves(p: Params) {
 
   const onSaveCurrent = async () => {
     try {
-      const state = rt.onlineRef.current ? await p.net.requestState() : p.localSim.serialize(rt.currentPresetRef.current)
-      if (!rt.onlineRef.current) state.camera = { ...rt.camRef.current }
+      const state = p.localSim.serialize(rt.currentPresetRef.current)
+      state.camera = { ...rt.camRef.current }
       await putSave(`宇宙 ${new Date().toLocaleString('zh-CN')}`, state)
       await refreshSaves()
       showSaveMsg('已保存')

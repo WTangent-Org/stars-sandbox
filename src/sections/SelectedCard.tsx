@@ -1,5 +1,4 @@
 import type { Body, UnitProfile } from '../sim/types'
-import type { NetSim } from '../sim/net'
 
 const KIND_LABEL: Record<Body['kind'], string> = { star: '恒星', planet: '行星', moon: '卫星', asteroid: '小行星', blackhole: '黑洞', ship: '飞船' }
 
@@ -24,10 +23,9 @@ export interface SelectedCardProps {
   follow: boolean
   onToggleFollow: () => void
   onDelete: () => void
-  net: NetSim | null
 }
 
-export default function SelectedCard({ selected, orbit, units, follow, onToggleFollow, onDelete, net }: SelectedCardProps) {
+export default function SelectedCard({ selected, orbit, units, follow, onToggleFollow, onDelete }: SelectedCardProps) {
   // 真实比例场景下，用真实单位显示选中天体信息
   const selMass = units
     ? (() => {
@@ -105,55 +103,6 @@ export default function SelectedCard({ selected, orbit, units, follow, onToggleF
           )}
         </div>
       )}
-      {/* 联机权限：拥有者与授权管理 */}
-      {net && net.you && (() => {
-        const ownerId = net.owners.get(selected.id) ?? (net.bodyPerms?.bodyId === selected.id ? net.bodyPerms.owner : null)
-        const owner = net.players.find((pl) => pl.id === ownerId)
-        const myPerm = ownerId === net.you!.id ? 'owner' : (net.bodyPerms?.bodyId === selected.id ? net.bodyPerms.grants[net.you!.id] : undefined) ?? 'read'
-        const canManage = myPerm === 'owner' || myPerm === 'admin'
-        return (
-          <div className="mt-3 border-t border-[#1a2540] pt-2">
-            <div className="flex items-center justify-between font-mono text-[10px]">
-              <span className="tracking-[0.15em] text-[#5b6b8c]">归属</span>
-              <span style={{ color: owner?.color ?? '#5b6b8c' }}>{owner ? owner.name : '无主'}</span>
-            </div>
-            {canManage && (
-              <div className="mt-2 space-y-1">
-                <div className="text-[9px] tracking-[0.15em] text-[#5b6b8c]">授权其他玩家</div>
-                {net.players
-                  .filter((pl) => pl.id !== net.you!.id)
-                  .map((pl) => {
-                    const cur = (net.bodyPerms?.bodyId === selected.id ? net.bodyPerms.grants[pl.id] : undefined) ?? 'read'
-                    return (
-                      <div key={pl.id} className="flex items-center gap-1.5">
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: pl.color }} />
-                        <span className="flex-1 truncate text-[10px] text-[#dbe4f3]/80">{pl.name}</span>
-                        {(['read', 'move', 'admin'] as const).map((perm) => (
-                          <button
-                            key={perm}
-                            onClick={() => net.setPerm(selected.id, pl.id, cur === perm ? 'revoke' : perm)}
-                            className={`rounded border px-1.5 py-0.5 text-[9px] transition-all ${
-                              cur === perm
-                                ? 'border-[#22d3ee]/50 bg-[#22d3ee]/15 text-[#22d3ee]'
-                                : 'border-[#1a2540] text-[#5b6b8c]/60 hover:text-[#dbe4f3]'
-                            }`}
-                          >
-                            {{ read: '看', move: '动', admin: '管' }[perm]}
-                          </button>
-                        ))}
-                      </div>
-                    )
-                  })}
-              </div>
-            )}
-            {!canManage && (
-              <div className="mt-1 font-mono text-[9px] text-[#5b6b8c]/60">
-                你的权限：{{ read: '只读', move: '可移动', admin: '可管理' }[myPerm as 'read' | 'move' | 'admin'] ?? myPerm}
-              </div>
-            )}
-          </div>
-        )
-      })()}
       <div className="mt-3 flex gap-1.5">
         <button
           onClick={onToggleFollow}

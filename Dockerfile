@@ -16,4 +16,4 @@ COPY --from=build /app/dist ./dist
 ENV PORT=8321
 EXPOSE 8321
 # 启动 dist/boot.js（Kimi 发布平台约定入口，内部转发到服务器）
-CMD ["node", "dist/boot.js"]
+CMD ["node", "serve.mjs"]

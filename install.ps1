@@ -35,6 +35,6 @@ npm run build
 Write-Host ''
 Write-Host '==> 完成！星球模拟器全栈一体化服务（网页托管 + 权威物理 + 联机），启动：'
 Write-Host "    cd $Dir"
-Write-Host "    `$env:PORT=$Port; node dist/boot.js"
+Write-Host "    `$env:PORT=$Port; node serve.mjs"
 Write-Host ''
 Write-Host "    浏览器直接打开 http://<你的IP>:$Port 即玩，无需再单独托管网页"

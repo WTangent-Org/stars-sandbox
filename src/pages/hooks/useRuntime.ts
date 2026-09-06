@@ -50,22 +50,15 @@ interface Params {
 export function useRuntime(p: Params) {
   const { rt } = p
   const { rerender, setUnits, setCurrentPreset, setAutosaveInfo } = p
-  const { net, localSim, future } = rt
+  const { localSim, future } = rt
   const [stats, setStats] = useState<SimStats>({ bodies: 0, stars: 0, fps: 60, simTime: 0, merges: 0, totalMass: 0 })
   const [selOrbit, setSelOrbit] = useState<SelOrbitInfo | null>(null)
   const [shipTel, setShipTel] = useState<ShipTelInfo | null>(null)
 
   /** 找「我的飞船」：联机时按 owners 归属找自己的船（找不到退化任意一艘）；离线取第一艘 */
   const findMyShip = useCallback((): Body | undefined => {
-    const s = rt.activeSimRef.current
-    if (rt.onlineRef.current && net.you) {
-      return (
-        s.bodies.find((b) => b.kind === 'ship' && b.alive && net.owners.get(b.id) === net.you!.id) ??
-        s.bodies.find((b) => b.kind === 'ship' && b.alive)
-      )
-    }
-    return s.bodies.find((b) => b.kind === 'ship' && b.alive)
-  }, [net, rt])
+    return rt.localSim.bodies.find((b) => b.kind === 'ship' && b.alive)
+  }, [rt])
 
   // —— 挂载：以存档为基础启动（恢复上次的宇宙），默认离线单机；联机需显式连接 ——
   useEffect(() => {
@@ -118,7 +111,6 @@ export function useRuntime(p: Params) {
     })()
     return () => {
       cancelled = true
-      net.disconnect()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -150,8 +142,7 @@ export function useRuntime(p: Params) {
       const dt = Math.min(rawDt, 1 / 30)
       rt.fpsRef.current = rt.fpsRef.current * 0.92 + (1 / Math.max(rawDt, 1e-4)) * 0.08
 
-      const on = rt.onlineRef.current
-      const sim = rt.activeSimRef.current
+      const sim = rt.localSim
       // 每帧把实测 FPS 喂给引擎的 auto 档位调节器（副作用收在循环里，render 体保持纯净）
       sim.resolvePerf(rt.fpsRef.current)
       future.leadTargetSec = rt.prefsRef.current.leadSeconds
@@ -218,7 +209,7 @@ export function useRuntime(p: Params) {
         m = Math.hypot(tx, ty)
         newThrust = m > 0 ? throttle : 0
         thrustChanged = newThrust !== rt.lastThrottleRef.current
-        if (thrustChanged && !on) future.invalidate() // 离线：推力变化 → 预演缓冲分叉
+        if (thrustChanged) future.invalidate() // 推力变化 → 预演缓冲分叉
         rt.lastThrottleRef.current = newThrust
         ship.thrust = newThrust
         if (m > 0) {
@@ -227,23 +218,13 @@ export function useRuntime(p: Params) {
         }
       }
 
-      // —— 物理推进：在线 = 镜像补算（权威帧纠偏）；离线 = 预演缓冲驱动 ——
-      if (on) {
-        net.tick(dt, rt.camRef.current.zoom)
-        // 推力/方向变化 → 发给服务器（镜像本地也写上，尾焰立即响应）
-        const dxn = m > 0 ? tx / m : 0
-        const dyn = m > 0 ? ty / m : 0
-        const dirChanged = dxn !== rt.lastThrustDirRef.current.x || dyn !== rt.lastThrustDirRef.current.y
-        if (thrustChanged || (newThrust > 0 && dirChanged)) {
-          rt.lastThrustDirRef.current = { x: dxn, y: dyn }
-          net.send({ type: 'thrust', throttle: newThrust, x: dxn, y: dyn })
-        }
-      } else if (!sim.config.paused) {
+      // —— 物理推进：预演缓冲驱动（暂停时释放影子） ——
+      if (!sim.config.paused) {
         if (!future.active) future.fork(sim)
         future.tick(sim)
         if (!future.consume(sim)) sim.advance(dt, rt.camRef.current.zoom) // 缓冲未建好（刚分叉）时直跑
       } else {
-        future.invalidate() // 暂停时无未来可言，释放影子
+        future.invalidate()
       }
 
       // 追踪选中天体
@@ -273,16 +254,15 @@ export function useRuntime(p: Params) {
     raf = requestAnimationFrame(loop)
 
     const statTimer = setInterval(() => {
-      const on = rt.onlineRef.current
-      const sim = rt.activeSimRef.current
+      const sim = rt.localSim
       const stars = sim.bodies.reduce((acc, b) => acc + (b.kind === 'star' || b.kind === 'blackhole' ? 1 : 0), 0)
       setStats({
         bodies: sim.bodies.length,
         stars,
         fps: Math.round(rt.fpsRef.current),
-        simTime: on ? net.simTime : sim.simTime,
-        merges: on ? net.merges : sim.merges,
-        totalMass: on ? net.totalMass : sim.totalMass,
+        simTime: sim.simTime,
+        merges: sim.merges,
+        totalMass: sim.totalMass,
       })
       // 选中天体的轨道根数：相对引力主导者的二体解（任意天体，不只飞船）
       const sel = rt.selectedRef.current != null ? sim.bodies.find((x) => x.id === rt.selectedRef.current) : null
@@ -341,7 +321,7 @@ export function useRuntime(p: Params) {
       clearInterval(statTimer)
       window.removeEventListener('resize', resize)
     }
-  }, [net, future, findMyShip, rt, rerender, setUnits, setCurrentPreset, setAutosaveInfo])
+  }, [future, findMyShip, rt, rerender, setUnits, setCurrentPreset, setAutosaveInfo])
 
   return { stats, selOrbit, shipTel }
 }

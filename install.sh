@@ -62,7 +62,7 @@ elif command -v pm2 >/dev/null 2>&1; then
   pm2 delete stars-sandbox >/dev/null 2>&1 || true
   PORT=$PORT pm2 start dist/boot.js --name stars-sandbox
 else
-  nohup env PORT=$PORT node dist/boot.js > nbody.log 2>&1 &
+  nohup env PORT=$PORT node serve.mjs > nbody.log 2>&1 &
   echo $! > nbody.pid
   echo "已后台启动（PID $(cat nbody.pid)，日志 nbody.log）"
 fi

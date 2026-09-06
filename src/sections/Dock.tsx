@@ -3,10 +3,7 @@ import type { PresetId, SimConfig, SpawnSettings, ToolMode } from '../sim/types'
 import { PRESETS } from '../sim/presets'
 import { MASS_BANDS, kindForMass } from '../sim/engine'
 import type { Prefs } from '../sim/prefs'
-import type { PlayerInfo } from '../shared/protocol'
-import type { NetStatus } from '../sim/net'
 import type { SaveMeta } from '../sim/saveStore'
-import ModeList from './ModeList'
 
 /** 质量段滑杆量程（与引擎 MASS_BANDS 对齐） */
 const MASS_MIN = 0.0001
@@ -19,17 +16,6 @@ const TABS: Array<{ id: DockTab; label: string }> = [
   { id: 'create', label: '创造' },
   { id: 'system', label: '系统' },
 ]
-
-export interface DockNetInfo {
-  status: NetStatus
-  online: boolean
-  room: string
-  players: PlayerInfo[]
-  youId?: string
-  /** 房主玩家名；null = 公共大厅等无主房间 */
-  hostName: string | null
-  isHost: boolean
-}
 
 interface Props {
   config: SimConfig
@@ -46,11 +32,7 @@ interface Props {
   onDeployShip: () => void
   prefs: Prefs
   onPrefs: (patch: Partial<Prefs>) => void
-  net: DockNetInfo
-  onCloseRoom: () => void
-  /** 联机中一键切回单机：宇宙存入本地并离线继续（无需回主菜单） */
-  onBackToSingle: () => void
-  // —— 存档（世界页内嵌） ——
+  // —— 存档 ——
   saves: SaveMeta[]
   saveMsg: string
   onSaveCurrent: () => void
@@ -58,12 +40,6 @@ interface Props {
   onDeleteSave: (id: string) => void
   onExportSave: (id: string) => void
   onImportSave: () => void
-  // —— 模式切换：大厅 / 房间列表 / 新建房间 ——
-  lastRoom?: string
-  roomList: Array<{ id: string; players: number; host: boolean }>
-  onJoinRoom: (id: string) => void
-  onNewRoom: () => void
-  onRefreshRooms: () => void
 }
 
 const PERF_META: Array<{ v: SimConfig['perfTier']; label: string; desc: string }> = [
@@ -143,40 +119,6 @@ export default function Dock(p: Props) {
         {/* ———— 世界：预设 + 存档 ———— */}
         {tab === 'world' && (
           <>
-            <div className="flex items-center justify-between">
-              <span className="mg-label">进入宇宙</span>
-              <button onClick={p.onRefreshRooms} title="刷新房间列表" className="rounded border border-[#1a2540] px-1.5 py-0.5 font-mono text-[10px] text-[#5b6b8c] hover:text-[#dbe4f3]">
-                ↻
-              </button>
-            </div>
-            <ModeList
-              rooms={p.roomList}
-              saves={p.saves}
-              currentRoom={p.net.online ? p.net.room : undefined}
-              onLoadSave={p.onLoadSave}
-              onDeleteSave={p.onDeleteSave}
-              onExportSave={p.onExportSave}
-              onJoinRoom={p.onJoinRoom}
-            />
-            <button
-              onClick={p.onNewRoom}
-              className="w-full rounded border border-[#34d399]/40 bg-[#34d399]/10 px-2 py-1.5 text-[11.5px] text-[#34d399] transition-all hover:bg-[#34d399]/20"
-            >
-              ＋ 新建房间（把当前宇宙开成联机房）
-            </button>
-            {p.saveMsg && <p className="font-mono text-[10px] text-[#34d399]">{p.saveMsg}</p>}
-            <button
-              onClick={p.onSaveCurrent}
-              className="w-full rounded border border-[#22d3ee]/40 bg-[#22d3ee]/10 px-2 py-1.5 text-[11.5px] text-[#dbe4f3] transition-all hover:bg-[#22d3ee]/20"
-            >
-              ⬇ 保存当前宇宙到本地
-            </button>
-            <div className="flex items-center justify-between border-t border-[#1a2540] pt-2">
-              <span className="mg-label">场景模板</span>
-              <button onClick={p.onImportSave} className="rounded border border-[#1a2540] px-2 py-1 text-[10px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35">
-                导入 .json
-              </button>
-            </div>
             <div className="grid grid-cols-2 gap-1.5">
               {PRESETS.map((pr) => (
                 <button
@@ -207,9 +149,59 @@ export default function Dock(p: Props) {
                 清空
               </button>
             </div>
+            <div className="flex items-center justify-between border-t border-[#1a2540] pt-2">
+              <span className="mg-label">存档</span>
+              <button onClick={p.onImportSave} className="rounded border border-[#1a2540] px-2 py-1 text-[10px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35">
+                导入 .json
+              </button>
+            </div>
+            <button
+              onClick={p.onSaveCurrent}
+              className="w-full rounded border border-[#22d3ee]/40 bg-[#22d3ee]/10 px-2 py-1.5 text-[11.5px] text-[#dbe4f3] transition-all hover:bg-[#22d3ee]/20"
+            >
+              ⬇ 保存当前宇宙
+            </button>
+            {p.saves.length === 0 ? (
+              <p className="text-[10px] text-[#5b6b8c]/60">每 30 秒自动保存一次，下次打开自动恢复。</p>
+            ) : (
+              <div className="space-y-1.5">
+                {p.saves.map((s) => (
+                  <div key={s.id} className="rounded border border-[#1a2540] px-2 py-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-[11.5px] text-[#dbe4f3]/90">{s.name}</span>
+                      <span className="shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">
+                        {new Date(s.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex gap-1">
+                      <button
+                        onClick={() => p.onLoadSave(s.id)}
+                        className="flex-1 rounded border border-[#22d3ee]/40 px-1 py-0.5 text-[10px] text-[#22d3ee] hover:bg-[#22d3ee]/10"
+                      >
+                        载入
+                      </button>
+                      <button
+                        onClick={() => p.onExportSave(s.id)}
+                        className="flex-1 rounded border border-[#1a2540] px-1 py-0.5 text-[10px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35"
+                      >
+                        导出
+                      </button>
+                      <button
+                        onClick={() => p.onDeleteSave(s.id)}
+                        className="flex-1 rounded border border-[#f87171]/25 px-1 py-0.5 text-[10px] text-[#f87171]/80 hover:border-[#f87171]/50"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {p.saveMsg && <p className="font-mono text-[10px] text-[#34d399]">{p.saveMsg}</p>}
           </>
         )}
 
+        {/* ———— 创造：观察/创建 + 质量滑杆 + 飞船 ———— */}
         {tab === 'create' && (
           <>
             <div className="flex gap-1.5">
@@ -272,13 +264,13 @@ export default function Dock(p: Props) {
                 {p.hasShip ? '⇢ 重新部署飞船' : '⇢ 部署飞船'}
               </button>
               <p className="mt-1.5 text-[10px] leading-relaxed text-[#5b6b8c]">
-                {p.net.online ? '联机每人一艘，点选部署位置。' : p.hasShip ? '部署新船会替换旧船。' : '点击按钮后在画布上放置。'}
+                {p.hasShip ? '部署新船会替换旧船。' : '点击按钮后在画布上放置。'}
               </p>
             </div>
           </>
         )}
 
-        {/* ———— 系统：性能 / 轨迹 / 摇杆 / 联机 ———— */}
+        {/* ———— 系统：性能 / 轨迹 / 摇杆 ———— */}
         {tab === 'system' && (
           <>
             <div className="space-y-1">
@@ -336,61 +328,6 @@ export default function Dock(p: Props) {
                 ]}
                 onPick={(v) => p.onPrefs({ joySide: v })}
               />
-            </div>
-            {/* —— 联机状态（只读展示；加入在主菜单，开放在游戏菜单） —— */}
-            <div className="border-t border-[#1a2540] pt-2">
-              <div className="flex items-center justify-between">
-                <span className="mg-label">联机</span>
-                <span
-                  className={`font-mono text-[10px] ${
-                    p.net.online ? 'text-[#34d399]' : p.net.status === 'connecting' ? 'text-[#fbbf24]' : 'text-[#f87171]'
-                  }`}
-                >
-                  {p.net.online ? (p.net.room === 'lobby' ? '公共大厅' : `房间 ${p.net.room}`) : '离线单机'}
-                </span>
-              </div>
-              {p.net.online && (
-                <>
-                  <div className="mt-1.5 space-y-1">
-                    {p.net.players.map((pl) => (
-                      <div key={pl.id} className="flex items-center gap-2 text-[11px]">
-                        <span className="h-2 w-2 rounded-full" style={{ background: pl.color, boxShadow: `0 0 5px ${pl.color}` }} />
-                        <span className="text-[#dbe4f3]/85">{pl.name}</span>
-                        {pl.id === p.net.youId && <span className="text-[9px] text-[#22d3ee]/70">（你）</span>}
-                        {pl.id === p.net.hostName && <span className="text-[9px] text-[#fbbf24]/80">（房主）</span>}
-                      </div>
-                    ))}
-                  </div>
-                  {p.net.isHost ? (
-                    <>
-                      <p className="mt-1.5 text-[10px] text-[#fbbf24]/85">你是房主：暂停/回退/清空/切预设由你直接执行。</p>
-                      <button
-                        onClick={p.onCloseRoom}
-                        className="mt-1.5 w-full rounded border border-[#f87171]/30 px-2 py-1.5 text-[11px] text-[#f87171]/85 hover:border-[#f87171]/60"
-                      >
-                        ✕ 关闭房间
-                      </button>
-                    </>
-                  ) : p.net.hostName ? (
-                    <p className="mt-1.5 text-[10px] leading-relaxed text-[#5b6b8c]">房主：{p.net.hostName}。全局操作由房主执行。</p>
-                  ) : (
-                    <p className="mt-1.5 text-[10px] leading-relaxed text-[#5b6b8c]">公共大厅：全局操作由全员投票决定。</p>
-                  )}
-                </>
-              )}
-              {p.net.online && (
-                <button
-                  onClick={p.onBackToSingle}
-                  className="mt-2 w-full rounded border border-[#22d3ee]/40 bg-[#22d3ee]/10 px-2 py-1.5 text-[11px] text-[#dbe4f3] hover:bg-[#22d3ee]/20"
-                >
-                  ⏏ 保存并回到单机
-                </button>
-              )}
-              {!p.net.online && (
-                <p className="mt-1.5 text-[10px] leading-relaxed text-[#5b6b8c]/70">
-                  当前已是单机模式。要联机：点上方「公共大厅 / 房间」进入，或「＋新建房间」开放自己的宇宙。
-                </p>
-              )}
             </div>
           </>
         )}

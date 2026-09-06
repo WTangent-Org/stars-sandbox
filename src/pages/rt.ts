@@ -1,11 +1,9 @@
 /**
  * Home 页面的共享可变运行时：全部 ref 集中一处创建，各 hooks 共享同一组引用。
- * 这是把 1600 行 Home 拆开而不改变行为的关键——所有突变模式保持原样，只挪代码位置。
  */
 import type { RefObject } from 'react'
 import { Simulation } from '../sim/engine'
 import { FutureBuffer } from '../sim/future'
-import { NetSim } from '../sim/net'
 import { makeStarfield, type SpawnPreview } from '../sim/renderer'
 import type { Camera, PresetId, SpawnSettings, ToolMode, UnitProfile } from '../sim/types'
 import type { Prefs } from '../sim/prefs'
@@ -30,7 +28,6 @@ export interface GrabState {
 
 export interface Rt {
   localSim: Simulation
-  net: NetSim
   future: FutureBuffer
   canvasRef: RefObject<HTMLCanvasElement | null>
   camRef: RefObject<Camera>
@@ -54,10 +51,6 @@ export interface Rt {
   warpRef: RefObject<number>
   baseTimeScaleRef: RefObject<number>
   currentPresetRef: RefObject<PresetId>
-  onlineRef: RefObject<boolean>
-  activeSimRef: RefObject<Simulation>
-  /** 显式连接过服务器才自动重连（默认离线，不自动连） */
-  netDesiredRef: RefObject<boolean>
   /** 启动恢复存档是一次异步过程：用户先动了预设/存档就放弃恢复 */
   userTouchedRef: RefObject<boolean>
   lastThrottleRef: RefObject<number>
@@ -66,11 +59,9 @@ export interface Rt {
 
 export function createRt(): Rt {
   const localSim = new Simulation()
-  const net = new NetSim()
   const future = new FutureBuffer()
   return {
     localSim,
-    net,
     future,
     canvasRef: { current: null },
     camRef: { current: { x: 0, y: 0, zoom: 1 } },
@@ -93,9 +84,6 @@ export function createRt(): Rt {
     warpRef: { current: 1 },
     baseTimeScaleRef: { current: 40 },
     currentPresetRef: { current: 'real' },
-    onlineRef: { current: false },
-    activeSimRef: { current: localSim },
-    netDesiredRef: { current: false },
     userTouchedRef: { current: false },
     lastThrottleRef: { current: 0 },
     lastThrustDirRef: { current: { x: 0, y: 0 } },
