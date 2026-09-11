@@ -11,11 +11,10 @@ export interface AutosaveInfo {
 }
 
 interface Props {
+  /** 自动存档摘要（=「继续游戏」；null 时进入默认场景） */
   autosave: AutosaveInfo | null
-  autosaveMeta?: { savedAt: number; bodies: number; preset?: string } | null
   onLoadAutosave: () => void
   saves: SaveMeta[]
-  onContinue: () => void
   onNewWorld: (preset: PresetId) => void
   onLoadSave: (id: string) => void
   onDeleteSave: (id: string) => void
@@ -23,20 +22,17 @@ interface Props {
   onImportSave: () => void
 }
 
-type Section = 'main' | 'worlds'
+const btn =
+  'w-full rounded-md border border-[#5b6b8c]/40 bg-[#0c1220]/80 px-4 py-3 text-left text-[14px] text-[#dbe4f3] transition-all hover:border-[#22d3ee]/60 hover:bg-[#22d3ee]/10'
+const smallBtn = 'rounded border border-[#1a2540] px-2 py-1 text-[10px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35'
 
-/** MC 风格主菜单：世界（存档）是一级入口，本地与多人分列 */
+function fmt(t: number): string {
+  return new Date(t).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+/** MC 风格主菜单：存档列表直接展开——继续游戏（自动存档）+ 手动存档 + 新的世界 */
 export default function MainMenu(p: Props) {
-  const [section, setSection] = useState<Section>('main')
   const [newWorldOpen, setNewWorldOpen] = useState(false)
-
-  const back = () => {
-    setSection('main')
-    setNewWorldOpen(false)
-  }
-
-  const bigBtn =
-    'w-full rounded-md border border-[#5b6b8c]/40 bg-[#0c1220]/80 px-4 py-3 text-left text-[14px] text-[#dbe4f3] transition-all hover:border-[#22d3ee]/60 hover:bg-[#22d3ee]/10'
 
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#050810]/70 backdrop-blur-[2px]">
@@ -46,106 +42,75 @@ export default function MainMenu(p: Props) {
           <h1 className="mt-1 text-[22px] font-bold tracking-wider text-[#dbe4f3]">星球物理模拟器</h1>
         </div>
 
-        {section === 'main' && (
-          <div className="mt-5 space-y-2.5">
-            <button onClick={p.onContinue} className={`${bigBtn} border-[#22d3ee]/50`}>
-              <span className="text-[#22d3ee]">▶ 继续游戏</span>
-              <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">
-                {p.autosave
-                  ? `上次的宇宙 · ${p.autosave.bodies} 天体 · ${new Date(p.autosave.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`
-                  : '新建的宇宙（真实太阳系）'}
-              </span>
-            </button>
-            <button onClick={() => setNewWorldOpen(!newWorldOpen)} className={bigBtn}>
-              ✦ 新的世界
-              <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">从预设开始创造（真实太阳系 / 空白宇宙 / 星系…）</span>
-            </button>
-            {newWorldOpen && (
-              <div className="grid grid-cols-2 gap-1.5 rounded-md border border-[#1a2540] bg-[#0c1220]/60 p-2">
-                {PRESETS.map((pr) => (
-                  <button
-                    key={pr.id}
-                    onClick={() => p.onNewWorld(pr.id)}
-                    title={pr.desc}
-                    className="rounded border border-[#1a2540] px-2 py-1.5 text-left text-[12px] text-[#dbe4f3]/75 transition-all hover:border-[#22d3ee]/50 hover:text-[#dbe4f3]"
-                  >
-                    {pr.label}
-                  </button>
-                ))}
-              </div>
-            )}
-            <button onClick={() => setSection('worlds')} className={bigBtn}>
-              📁 本地世界
-              <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">
-                {p.saves.length > 0 ? `${p.saves.length} 个存档` : '载入存档 / 导入导出 .json'}
-              </span>
-            </button>
-          </div>
-        )}
+        <div className="mt-5 space-y-2.5">
+          {/* 继续游戏 = 载入自动存档（就是列表里那个自动存档，不再单列重复） */}
+          <button onClick={p.onLoadAutosave} className={`${btn} border-[#22d3ee]/50`}>
+            <span className="text-[#22d3ee]">▶ 继续游戏</span>
+            <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">
+              {p.autosave
+                ? `上次的宇宙 · ${p.autosave.bodies} 天体 · ${fmt(p.autosave.savedAt)}`
+                : '开始新的旅程（真实太阳系）'}
+            </span>
+          </button>
 
-        {section === 'worlds' && (
-          <div className="mt-5">
-            <div className="mb-2 flex items-center justify-between">
-              <button onClick={back} className="font-mono text-[11px] text-[#5b6b8c] hover:text-[#dbe4f3]">
-                ← 返回
-              </button>
-              <button
-                onClick={p.onImportSave}
-                className="rounded border border-[#1a2540] px-2 py-1 text-[10px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35"
-              >
+          <button onClick={() => setNewWorldOpen(!newWorldOpen)} className={btn}>
+            ✦ 新的世界
+            <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">从预设开始创造（真实太阳系 / 空白宇宙 / 星系…）</span>
+          </button>
+          {newWorldOpen && (
+            <div className="grid grid-cols-2 gap-1.5 rounded-md border border-[#1a2540] bg-[#0c1220]/60 p-2">
+              {PRESETS.map((pr) => (
+                <button
+                  key={pr.id}
+                  onClick={() => p.onNewWorld(pr.id)}
+                  title={pr.desc}
+                  className="rounded border border-[#1a2540] px-2 py-1.5 text-left text-[12px] text-[#dbe4f3]/75 transition-all hover:border-[#22d3ee]/50 hover:text-[#dbe4f3]"
+                >
+                  {pr.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 手动存档列表（直接展开） */}
+          <div className="rounded-md border border-[#5b6b8c]/40 bg-[#0c1220]/80 px-3 py-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[13px] text-[#dbe4f3]">📁 存档</span>
+              <button onClick={p.onImportSave} className={smallBtn}>
                 导入 .json
               </button>
             </div>
-            <div className="mg-scroll max-h-[46vh] space-y-1.5 overflow-y-auto pr-1">
-              {p.autosaveMeta && (
-                  <div className="rounded border border-[#34d399]/30 px-2 py-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="truncate text-[12.5px] text-[#34d399]">自动存档</span>
-                      <span className="ml-2 shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">
-                        {new Date(p.autosaveMeta.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 font-mono text-[9px] text-[#5b6b8c]/50">{p.autosaveMeta.bodies} 天体</div>
-                    <button
-                      onClick={p.onLoadAutosave}
-                      className="mt-1 w-full rounded border border-[#34d399]/40 px-1.5 py-1 text-[10.5px] text-[#34d399] hover:bg-[#34d399]/10"
-                    >
-                      进入世界
-                    </button>
-                  </div>
-                )}
-                {p.saves.length === 0 && !p.autosaveMeta && (
-                  <p className="rounded-md border border-[#1a2540] px-3 py-6 text-center text-[11px] text-[#5b6b8c]/60">
-                    还没有本地世界。游戏内会每 30 秒自动保存；也可以手动保存。
-                  </p>
-                )}
+            {p.saves.length === 0 ? (
+              <p className="mt-2 text-[10px] leading-relaxed text-[#5b6b8c]/70">
+                暂无手动存档。游戏内每 30 秒自动保存当前进度；「⬇」按钮可另存为固定存档。
+              </p>
+            ) : (
+              <div className="mg-scroll mt-2 max-h-[34vh] space-y-1.5 overflow-y-auto pr-1">
                 {p.saves.map((s) => (
-                  <div key={s.id} className="rounded border border-[#1a2540] px-2.5 py-2">
-                    <div className="flex items-center justify-between">
-                      <span className="truncate text-[12.5px] text-[#dbe4f3]/90">{s.name}</span>
-                      <span className="ml-2 shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">
-                        {new Date(s.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                      </span>
+                  <div key={s.id} className="rounded border border-[#1a2540] px-2 py-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-[12px] text-[#dbe4f3]/90">{s.name}</span>
+                      <span className="shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">{fmt(s.savedAt)}</span>
                     </div>
                     <div className="mt-0.5 font-mono text-[9px] text-[#5b6b8c]/50">
                       {s.bodies} 天体{s.preset ? ` · ${PRESETS.find((pr) => pr.id === s.preset)?.label ?? s.preset}` : ''}
                     </div>
-                    <div className="mt-1.5 flex gap-1.5">
+                    <div className="mt-1 flex gap-1">
                       <button
                         onClick={() => p.onLoadSave(s.id)}
-                        className="flex-1 rounded border border-[#22d3ee]/40 px-1.5 py-1 text-[10.5px] text-[#22d3ee] hover:bg-[#22d3ee]/10"
+                        className="flex-1 rounded border border-[#22d3ee]/40 px-1 py-0.5 text-[10px] text-[#22d3ee] hover:bg-[#22d3ee]/10"
                       >
-                        进入世界
+                        进入
                       </button>
                       <button
                         onClick={() => p.onExportSave(s.id)}
-                        className="flex-1 rounded border border-[#1a2540] px-1.5 py-1 text-[10.5px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35"
+                        className="flex-1 rounded border border-[#1a2540] px-1 py-0.5 text-[10px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35"
                       >
                         导出
                       </button>
                       <button
                         onClick={() => p.onDeleteSave(s.id)}
-                        className="flex-1 rounded border border-[#f87171]/25 px-1.5 py-1 text-[10.5px] text-[#f87171]/80 hover:border-[#f87171]/50"
+                        className="flex-1 rounded border border-[#f87171]/25 px-1 py-0.5 text-[10px] text-[#f87171]/80 hover:border-[#f87171]/50"
                       >
                         删除
                       </button>
@@ -153,9 +118,13 @@ export default function MainMenu(p: Props) {
                   </div>
                 ))}
               </div>
+            )}
           </div>
-        )}
 
+          <p className="text-center font-mono text-[9px] leading-relaxed text-[#5b6b8c]/60">
+            存档保存在浏览器本地（IndexedDB）· 游戏内每 30 秒自动保存
+          </p>
+        </div>
       </div>
     </div>
   )

@@ -143,9 +143,6 @@ export class FutureBuffer {
   }
 
   /** 领先画面的缓冲秒数 */
-  get leadSeconds(): number {
-    return this.frames.length * FRAME_DT
-  }
 
   /** 消费一帧：把缓冲状态写回主模拟 bodies（不动对象身份，UI 引用不丢）。
    *  大场景（coarse）返回 false——影子精度不足以驱动主模拟，主模拟自己直跑 */
@@ -204,8 +201,4 @@ export class FutureBuffer {
   }
 
   /** 预演覆盖的模拟时长（秒级显示用） */
-  get horizonSimTime(): number {
-    const f = this.frames[this.frames.length - 1]
-    return f ? f.t : 0
-  }
 }

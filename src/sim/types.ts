@@ -100,12 +100,6 @@ export interface SimConfig {
 }
 
 /** 各档位下的实际运行参数（resolvePerf 填充） */
-export interface ResolvedPerf {
-  tier: PerfTier
-  cfg: PerfConfig
-  /** auto 模式下当前实际生效的档位 */
-  effectiveTier: PerfTier
-}
 
 export interface SimStats {
   bodies: number

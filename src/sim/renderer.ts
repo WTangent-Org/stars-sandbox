@@ -282,250 +282,42 @@ export function draw(
 }
 
 /**
- * 飞船轨道预测：完整 N 体数值外推（船为无质量测试粒子，其余天体照常互相吸引），
- * 因此会自然包含行星引力摄动，不会把宿主当静止点而画歪。
- * 用跳跃蛙（leapfrog）积分，能量长期行为好。
+ * 飞船轨道预测（兜底）：正常情况走预演缓冲的精确推演；缓冲不可用时用
+ * 简化 N 体推演画虚线——天体近似匀速直线，飞船为无质量测试粒子。
  */
-export function predictShipPath(sim: Simulation, ship: Body, maxSteps = 1400): Array<{ x: number; y: number }> | null {
-  let bodies = sim.bodies.filter((b) => b.alive && b.id !== ship.id && (b.kind === 'star' || b.kind === 'planet' || b.kind === 'moon' || b.kind === 'blackhole'))
-  if (bodies.length === 0) return null
+export function predictShipPath(sim: Simulation, ship: Body, steps = 420): Array<{ x: number; y: number }> | null {
   const G = sim.config.G
-
-  // 性能护栏：星系场景有数百天体，全部外推是 O(n²)×步数，每帧调用必卡死。
-  // 只保留对飞船引力最强的前 MAX_PREDICT 个——远处恒星的引力在外推时标内
-  // 近似匀速背景，对轨迹形状影响可忽略；少了它们反而更稳（不会累积多体误差乱晃）
-  const MAX_PREDICT = 16
-  if (bodies.length > MAX_PREDICT) {
-    const scored = bodies.map((b) => {
-      const r = Math.max(Math.hypot(ship.x - b.x, ship.y - b.y), 1e-9)
-      return { b, pull: b.mass / (r * r) }
-    })
-    scored.sort((a, z) => z.pull - a.pull)
-    bodies = scored.slice(0, MAX_PREDICT).map((s) => s.b)
-  }
-
-  // 宿主选择：先找引力最强的天体；若飞船相对它「牢固束缚」（轨道能量明显为负），
-  // 以它为预测宿主（如贴行星停泊）；否则升到恒星级宿主（恒星/黑洞中最强者），
-  // 因为勉强束缚/逃逸态的飞船很快进入绕主星轨道，绕主星的外推才是用户想看的
-  let hostIdx = -1
-  let hostPull = 0
-  let hostR = Infinity
-  for (let i = 0; i < bodies.length; i++) {
-    const b = bodies[i]
-    const r = Math.hypot(ship.x - b.x, ship.y - b.y)
-    if (r < 1e-9 || b.mass <= 0) continue
-    const pull = (G * b.mass) / (r * r)
-    if (pull > hostPull) {
-      hostPull = pull
-      hostIdx = i
-      hostR = r
+  const eps2 = sim.config.softening ** 2
+  const hosts = sim.bodies.filter((b) => b.alive && b.id !== ship.id && b.mass > 0.5)
+  if (hosts.length === 0) return null
+  // 只保留对飞船引力最强的前 8 个天体，控制每帧开销
+  const top = hosts
+    .map((b) => ({ b, pull: b.mass / Math.max((b.x - ship.x) ** 2 + (b.y - ship.y) ** 2, 1e-9) }))
+    .sort((a, z) => z.pull - a.pull)
+    .slice(0, 8)
+    .map((s) => s.b)
+  let x = ship.x
+  let y = ship.y
+  let vx = ship.vx
+  let vy = ship.vy
+  const dt = 0.25
+  const pts: Array<{ x: number; y: number }> = [{ x, y }]
+  for (let i = 0; i < steps; i++) {
+    let ax = 0
+    let ay = 0
+    for (const b of top) {
+      const dx = b.x + b.vx * dt * i - x // 天体近似匀速直线
+      const dy = b.y + b.vy * dt * i - y
+      const r2 = dx * dx + dy * dy + eps2
+      const f = (G * b.mass) / (r2 * Math.sqrt(r2))
+      ax += f * dx
+      ay += f * dy
     }
-  }
-  if (hostIdx >= 0) {
-    const hb = bodies[hostIdx]
-    const dvx = ship.vx - hb.vx
-    const dvy = ship.vy - hb.vy
-    const eps = (dvx * dvx + dvy * dvy) / 2 - (G * hb.mass) / hostR
-    const boundMargin = (-eps) / ((G * hb.mass) / hostR)
-    if (boundMargin < 0.15 && (hb.kind === 'planet' || hb.kind === 'moon')) {
-      // 不够牢固 → 升级到恒星级宿主
-      let starIdx = -1
-      let starPull = 0
-      for (let i = 0; i < bodies.length; i++) {
-        const b = bodies[i]
-        if (b.kind !== 'star' && b.kind !== 'blackhole') continue
-        const r = Math.hypot(ship.x - b.x, ship.y - b.y)
-        if (r < 1e-9 || b.mass <= 0) continue
-        const pull = (G * b.mass) / (r * r)
-        if (pull > starPull) {
-          starPull = pull
-          starIdx = i
-        }
-      }
-      if (starIdx >= 0) hostIdx = starIdx
-    }
-  }
-  // 基准 dt：绕宿主轨道周期的 1/300，限制在合理区间
-  let minT = Infinity
-  if (hostIdx >= 0) {
-    const hb = bodies[hostIdx]
-    const r = Math.hypot(ship.x - hb.x, ship.y - hb.y)
-    minT = 2 * Math.PI * Math.sqrt((r * r * r) / (G * hb.mass))
-  }
-  const dt = isFinite(minT) ? Math.max(0.05, Math.min(minT / 300, 2.5)) : 0.5
-
-  // 状态拷贝：所有天体的位置/速度 + 飞船（无质量）
-  const n = bodies.length
-  const px = new Float64Array(n)
-  const py = new Float64Array(n)
-  const vx = new Float64Array(n)
-  const vy = new Float64Array(n)
-  const ax = new Float64Array(n)
-  const ay = new Float64Array(n)
-  const ms = new Float64Array(n)
-  for (let i = 0; i < n; i++) {
-    px[i] = bodies[i].x
-    py[i] = bodies[i].y
-    vx[i] = bodies[i].vx
-    vy[i] = bodies[i].vy
-    ms[i] = bodies[i].mass
-  }
-  let sx = ship.x
-  let sy = ship.y
-  let svx = ship.vx
-  let svy = ship.vy
-  let sax = 0
-  let say = 0
-
-  const eps2 = sim.config.softening * sim.config.softening
-  const pts: Array<{ x: number; y: number }> = [{ x: sx, y: sy }]
-  let prevAng = 0
-  let acc = 0
-  // 辐角参考系固定在预测宿主上（外推中同步运动），而不是每帧重选宿主——
-  // 重选会导致飞船跨越两个天体中间时参考系切换，辐角方向反转、虚线提前收笔
-  const refIdx = hostIdx
-
-  // 仅飞船的加速度（用于近天体子步，天体位置可传入插值结果）
-  const computeShipAccelAt = (bx: Float64Array, by: Float64Array) => {
-    sax = 0
-    say = 0
-    for (let i = 0; i < n; i++) {
-      const dxs = bx[i] - sx
-      const dys = by[i] - sy
-      const r2s = dxs * dxs + dys * dys + eps2
-      const invRs = 1 / Math.sqrt(r2s)
-      const fs = (G * ms[i]) * invRs / r2s
-      sax += fs * dxs
-      say += fs * dys
-    }
-  }
-
-  // 标准 KDK（踢-漂-踢）蛙跳：先算加速度 → 半步速度 → 全步位置 → 重算加速度 → 半步速度
-  const computeAll = () => {
-    for (let i = 0; i < n; i++) {
-      ax[i] = 0
-      ay[i] = 0
-    }
-    sax = 0
-    say = 0
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const dx = px[j] - px[i]
-        const dy = py[j] - py[i]
-        const r2 = dx * dx + dy * dy + eps2
-        const invR = 1 / Math.sqrt(r2)
-        const invR3 = invR / r2
-        const f = G * invR3
-        ax[i] += f * dx * ms[j]
-        ay[i] += f * dy * ms[j]
-        ax[j] -= f * dx * ms[i]
-        ay[j] -= f * dy * ms[i]
-      }
-      const dxs = px[i] - sx
-      const dys = py[i] - sy
-      const r2s = dxs * dxs + dys * dys + eps2
-      const invRs = 1 / Math.sqrt(r2s)
-      const fs = (G * ms[i]) * invRs / r2s
-      sax += fs * dxs
-      say += fs * dys
-    }
-  }
-  computeAll()
-  // 逃逸收笔用的初始相对距离
-  const r0Ref = refIdx >= 0 ? Math.hypot(sy - py[refIdx], sx - px[refIdx]) : Infinity
-  const pxs = new Float64Array(n)
-  const pys = new Float64Array(n)
-  const pxi = new Float64Array(n)
-  const pyi = new Float64Array(n)
-  for (let step = 0; step < maxSteps; step++) {
-    // 踢半步（仅天体）
-    const h = dt * 0.5
-    for (let i = 0; i < n; i++) {
-      vx[i] += ax[i] * h
-      vy[i] += ay[i] * h
-    }
-    // 记录步初位置，漂全步
-    for (let i = 0; i < n; i++) {
-      pxs[i] = px[i]
-      pys[i] = py[i]
-      px[i] += vx[i] * dt
-      py[i] += vy[i] * dt
-    }
-    // 飞船：在步初→步末位置线性插值的天体场中做自适应子步
-    // 近天体时按局部轨道周期的 1/120 细分，保证引力弹弓/近距离逃逸不失真
-    computeShipAccelAt(pxs, pys)
-    let rem = dt
-    while (rem > 1e-12) {
-      // 当前最强引力源决定局部时标
-      let pull = 0
-      let rLocal = Infinity
-      let mLocal = 0
-      for (let i = 0; i < n; i++) {
-        const dxs = px[i] - sx
-        const dys = py[i] - sy
-        const r2s = dxs * dxs + dys * dys + eps2
-        if (ms[i] <= 0) continue
-        const p = (G * ms[i]) / r2s
-        if (p > pull) {
-          pull = p
-          rLocal = Math.sqrt(r2s)
-          mLocal = ms[i]
-        }
-      }
-      const tLocal = mLocal > 0 ? 2 * Math.PI * Math.sqrt((rLocal * rLocal * rLocal) / (G * mLocal)) : Infinity
-      const hs = Math.min(rem, Math.max(0.01, Math.min(tLocal / 120, dt)))
-      const frac = 1 - rem / dt
-      for (let i = 0; i < n; i++) {
-        pxi[i] = pxs[i] + (px[i] - pxs[i]) * frac
-        pyi[i] = pys[i] + (py[i] - pys[i]) * frac
-      }
-      computeShipAccelAt(pxi, pyi)
-      const hh = hs * 0.5
-      svx += sax * hh
-      svy += say * hh
-      sx += svx * hs
-      sy += svy * hs
-      for (let i = 0; i < n; i++) {
-        const f2 = frac + hs / dt
-        pxi[i] = pxs[i] + (px[i] - pxs[i]) * f2
-        pyi[i] = pys[i] + (py[i] - pys[i]) * f2
-      }
-      computeShipAccelAt(pxi, pyi)
-      svx += sax * hh
-      svy += say * hh
-      rem -= hs
-      // 子步密集时（近天体段）记录中间点，画出轨道的急转弯
-      if (hs < dt * 0.9) pts.push({ x: sx, y: sy })
-    }
-    // 重算全部加速度（含飞船，供下一步前半踢使用——虽然飞船子步自算，这里保持数组同步）
-    computeAll()
-    // 踢半步（仅天体）
-    for (let i = 0; i < n; i++) {
-      vx[i] += ax[i] * h
-      vy[i] += ay[i] * h
-    }
-    pts.push({ x: sx, y: sy })
-
-    // 闭合判定：相对参考天体（外推中同步运动的）的辐角累计满一圈即收笔
-    if (refIdx >= 0) {
-      const ang = Math.atan2(sy - py[refIdx], sx - px[refIdx])
-      if (step === 0) prevAng = ang
-      let d = ang - prevAng
-      if (d > Math.PI) d -= 2 * Math.PI
-      if (d < -Math.PI) d += 2 * Math.PI
-      acc += d
-      prevAng = ang
-      if (Math.abs(acc) > Math.PI * 1.98) break
-      // 逃逸：距离拉到初始 6 倍且仍在远离，直接收笔，避免画出甩向无穷远的长线
-      const rx = sx - px[refIdx]
-      const ry = sy - py[refIdx]
-      const rRel = Math.hypot(rx, ry)
-      if (rRel > r0Ref * 6) {
-        const rvx = svx - vx[refIdx]
-        const rvy = svy - vy[refIdx]
-        if ((rx * rvx + ry * rvy) / rRel > 0) break
-      }
-    }
+    vx += ax * dt
+    vy += ay * dt
+    x += vx * dt
+    y += vy * dt
+    pts.push({ x, y })
   }
   return pts.length > 6 ? pts : null
 }

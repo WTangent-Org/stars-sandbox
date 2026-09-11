@@ -58,6 +58,12 @@ export default function Home() {
   const worldOps = useWorldOps({ rt, rerender, onPrefs, setUnits, setCurrentPreset, setSelectedId, setFollow, setWarp, setMode, showSaveMsg })
   const { spawnCfg, onConfig, applyWarp, applyPreset, doRewind, onClear, onSpawnSettings, deployShip } = worldOps
 
+  /** 主菜单「继续游戏」：有自动存档就载入，否则进默认场景 */
+  const continueGame = useCallback(() => {
+    if (autosaveMeta || autosaveInfo) void loadAutosave()
+    else setScreen('game')
+  }, [autosaveMeta, autosaveInfo, loadAutosave, setScreen])
+
   // —— 暂停切换（空格与底部按钮共用） ——
   const togglePause = useCallback(() => {
     localSim.config.paused = !localSim.config.paused
@@ -296,10 +302,8 @@ export default function Home() {
       {screen === 'menu' && (
         <MainMenu
           autosave={autosaveInfo}
-          autosaveMeta={autosaveMeta}
-          onLoadAutosave={() => void loadAutosave()}
+          onLoadAutosave={continueGame}
           saves={saves}
-          onContinue={() => setScreen('game')}
           onNewWorld={startLocalWorld}
           onLoadSave={(id) => void loadSaveFromMenu(id)}
           onDeleteSave={(id) => void onDeleteSave(id)}
