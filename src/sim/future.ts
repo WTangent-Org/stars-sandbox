@@ -1,6 +1,4 @@
 import { Simulation } from './engine'
-import { trailCap } from './trail'
-import { TRAIL } from './config'
 
 /** 缓冲帧：全场天体的最小状态（按主模拟 bodies 顺序一一对应） */
 export interface Frame {
@@ -24,9 +22,8 @@ const RATE_MAX = 8
  * 渲染帧按画面速度从缓冲消费。推力/拖拽/加星等状态变更 → invalidate() 分叉重算。
  * 飞船的「未来轨迹」直接从缓冲里读——是真实 N 体结果，不是近似外推。
  *
- * 设计取舍：预演对主模拟是「单向帮助」——主模拟消费影子算好的缓冲帧，
- * 省下自己的积分开销；但主模拟不能反向跳帧复用影子（会吞掉用户的即时干预、
- * 丢失特效/生命周期事件），所以影子的计算本质是纯开销换预测。
+ * 设计取舍：主模拟自己直跑物理（合并/碎裂/特效必须发生在可见画面里），
+ * 影子纯粹为飞船预测线服务——缓冲只回传位置，不回传离散事件。
  *
  * 场景分级：
  * - 小场景（≤FULL_PRECISION_MAX 天体）：影子全精度积分，主模拟直接消费缓冲，
@@ -38,7 +35,6 @@ export class FutureBuffer {
   frames: Frame[] = []
   /** 帧对应的 bodies 顺序（分叉时锁定；主模拟 add/remove 会触发 invalidate 重建） */
   order: number[] = []
-  mergesAt: number[] = [] // 每帧的 merges 值（消费时同步给主模拟）
   private shadow: Simulation | null = null
   /** 连续分叉代数：同一代内影子状态有效 */
   generation = 0
@@ -65,7 +61,6 @@ export class FutureBuffer {
     this.shadow = sim.clone()
     this.order = sim.bodies.map((b) => b.id)
     this.frames = []
-    this.mergesAt = []
     this.generation++
     this.coarse = false
   }
@@ -139,53 +134,9 @@ export class FutureBuffer {
       }
     }
     this.frames.push({ t: f.t, x: fx, y: fy, vx: fvx, vy: fvy, alive: fa })
-    this.mergesAt.push(sh.merges)
   }
 
   /** 领先画面的缓冲秒数 */
-
-  /** 消费一帧：把缓冲状态写回主模拟 bodies（不动对象身份，UI 引用不丢）。
-   *  大场景（coarse）返回 false——影子精度不足以驱动主模拟，主模拟自己直跑 */
-  consume(sim: Simulation): boolean {
-    if (this.coarse) return false
-    const f = this.frames.shift()
-    if (!f) return false
-    const merges = this.mergesAt.shift() ?? sim.merges
-    // 被合并掉的天体：从主模拟移除（保持与影子一致）
-    let removed = false
-    for (let i = 0; i < this.order.length; i++) {
-      if (!f.alive[i]) {
-        const b = sim.bodies.find((x) => x.id === this.order[i])
-        if (b) {
-          b.alive = false
-          removed = true
-        }
-      }
-    }
-    if (removed) sim.bodies = sim.bodies.filter((b) => b.alive)
-    for (let i = 0; i < this.order.length; i++) {
-      if (!f.alive[i]) continue
-      const b = sim.bodies.find((x) => x.id === this.order[i])
-      if (!b || b.held) continue
-      // 轨迹记录（沿用与引擎一致的间距采样）
-      const last = b.trail[b.trail.length - 1]
-      const dx = f.x[i] - (last?.x ?? Infinity)
-      const dy = f.y[i] - (last?.y ?? Infinity)
-      if (sim.config.trails && dx * dx + dy * dy > 1e-12) {
-        if (dx * dx + dy * dy > 0.0016) {
-          b.trail.push({ x: f.x[i], y: f.y[i] })
-          if (!sim.config.trailsForever && b.trail.length > trailCap(sim.bodies.length)) b.trail.splice(0, TRAIL.trimStep)
-        }
-      }
-      b.x = f.x[i]
-      b.y = f.y[i]
-      b.vx = f.vx[i]
-      b.vy = f.vy[i]
-    }
-    sim.simTime = f.t
-    sim.merges = merges
-    return true
-  }
 
   /** 某艘飞船在缓冲里的未来位置序列（画虚线用；按 stride 抽稀） */
   shipFuture(shipId: number, stride = 6): Array<{ x: number; y: number }> | null {

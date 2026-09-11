@@ -218,11 +218,13 @@ export function useRuntime(p: Params) {
         }
       }
 
-      // —— 物理推进：预演缓冲驱动（暂停时释放影子） ——
+      // —— 物理推进：主模拟自己直跑（碰撞/合并/特效/生命周期都在可见画面里真实发生）。
+      // 预演缓冲只服务飞船预测虚线——绝不拿缓冲驱动主画面：缓冲只回传位置速度，
+      // 影子里的合并、碎片与特效到不了画面，那正是「看不到碰撞」的根源 ——
       if (!sim.config.paused) {
+        sim.advance(dt, rt.camRef.current.zoom)
         if (!future.active) future.fork(sim)
-        future.tick(sim)
-        if (!future.consume(sim)) sim.advance(dt, rt.camRef.current.zoom) // 缓冲未建好（刚分叉）时直跑
+        future.tick(sim) // 仅为预测线填充缓冲（自适应限 5ms/帧）
       } else {
         future.invalidate()
       }
