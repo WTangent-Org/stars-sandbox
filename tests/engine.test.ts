@@ -10,7 +10,10 @@ import {
   MASS_BANDS,
   starStageFor,
   starEvolutionRate,
+  radiusFor,
 } from '../src/sim/engine.ts'
+import { loadPreset, PRESETS } from '../src/sim/presets.ts'
+import type { PresetId } from '../src/sim/types.ts'
 import type { WorldState } from '../src/sim/types.ts'
 
 // ———— 质量段 ————
@@ -33,6 +36,45 @@ test('MASS_BANDS：min 单调递增且覆盖到 0', () => {
   assert.equal(MASS_BANDS[0].min, 0)
 })
 
+test('radiusFor：全段单调（大天体不得比小天体小）', () => {
+  // 行星上限曾封在 6.0（质量 ~218 即触顶），木星渲染得比地球还小
+  for (const kind of ['asteroid', 'moon', 'planet', 'star', 'blackhole'] as const) {
+    let prev = 0
+    for (let m = 0.001; m < 2e6; m *= 1.37) {
+      const r = radiusFor(kind, m)
+      assert.ok(r >= prev, `${kind} m=${m.toExponential(1)} r=${r} < prev ${prev}`)
+      prev = r
+    }
+  }
+})
+
+test('虚构预设：实体天体 kind 与质量段一致', () => {
+  // 恒星落进行星段、黑洞落进行星段是历史 bug（预设按旧尺度写，段表后加）
+  const fictional: PresetId[] = ['solar', 'binary', 'triple', 'galaxy', 'collision']
+  for (const id of fictional) {
+    assert.ok(PRESETS.some((p) => p.id === id))
+    const s = new Simulation()
+    loadPreset(s, id)
+    assert.ok(s.bodies.length > 0, `${id} 应有天体`)
+    for (const b of s.bodies) {
+      if (!b.solid) continue // 示踪恒星/非实体天体不参与碰撞定级，豁免
+      assert.equal(b.kind, kindForMass(b.mass), `${id} #${b.id} ${b.name ?? ''} kind=${b.kind} mass=${b.mass}`)
+    }
+  }
+})
+
+test('真实太阳系：太阳/木星/地球质量保持物理值', () => {
+  const s = new Simulation()
+  loadPreset(s, 'real')
+  const sun = s.bodies.find((b) => b.name === '太阳')
+  const jupiter = s.bodies.find((b) => b.name === '木星')
+  const earth = s.bodies.find((b) => b.name === '地球')
+  assert.ok(sun && jupiter && earth)
+  assert.ok(Math.abs(sun.mass - 1.989e30 * 1e-27) < 1, '太阳 ≈ 1989（1e27 kg 单位）')
+  assert.ok(Math.abs(jupiter.mass - 1.898e27 * 1e-27) < 0.01)
+  assert.ok(Math.abs(earth.mass - 5.972e24 * 1e-27) < 0.001)
+})
+
 // ———— 并合重新定级 ————
 
 function settle(frames: number, setup: (s: Simulation) => void): Simulation {
@@ -53,10 +95,11 @@ test('低速卫星对撞 → 并合升级为行星', () => {
 })
 
 test('行星并合跨越点燃线 → 恒星', () => {
-  // 贴脸低速：必然并合；12000+13000=25000 > 24000
+  // 12000+13000=25000 > 24000。半径和 ~26（cap=16 后段顶行星很大），
+  // 出生在接触距离外一点点（±14），自由落体到接触时 relV≈0.13vEsc ∈ 并合段
   const s = settle(600, (sim) => {
-    sim.addBody({ kind: 'planet', x: -6, y: 0, mass: 12000 })
-    sim.addBody({ kind: 'planet', x: 6, y: 0, mass: 13000 })
+    sim.addBody({ kind: 'planet', x: -14, y: 0, mass: 12000 })
+    sim.addBody({ kind: 'planet', x: 14, y: 0, mass: 13000 })
   })
   const star = s.bodies.find((b) => b.kind === 'star' && b.mass >= 24000)
   assert.ok(star, '应点燃为恒星')
@@ -112,13 +155,16 @@ test('高速对撞 → 碎裂（碎片群）', () => {
   })
   assert.ok(s.bodies.length > 2, `碎片群应多于 2 体，实际 ${s.bodies.length}`)
   assert.ok(s.bodies.some((b) => b.kind === 'asteroid'), '应产生小行星碎片')
+  const total = s.bodies.reduce((a, b) => a + b.mass, 0)
+  assert.ok(Math.abs(total - 1600) < 1, `碎裂必须守恒（曾一撞蒸发 40%），实际 ${total.toFixed(2)}`)
 })
 
 test('中速对撞 → 反弹溅屑后吸积为一颗（不碎裂成群）', () => {
   const s = new Simulation()
-  // relV≈25 ≈ 0.8 vEsc → 反弹分支：溅屑但弹不开（反弹速度 < 当地逃逸），最终吸积
-  s.addBody({ kind: 'planet', x: -7, y: 0, mass: 3000, vx: 12.5 })
-  s.addBody({ kind: 'planet', x: 7, y: 0, mass: 3000, vx: -12.5 })
+  // relV=25，vEsc=√(2G·6000/(2×9.8))≈24.7 → ≈1.0 vEsc → 反弹分支：
+  // 溅屑但弹不开（反弹速度 < 当地逃逸），最终吸积。出生间距 > 半径和(~19.6)
+  s.addBody({ kind: 'planet', x: -14, y: 0, mass: 3000, vx: 12.5 })
+  s.addBody({ kind: 'planet', x: 14, y: 0, mass: 3000, vx: -12.5 })
   for (let i = 0; i < 10; i++) s.advance(1 / 60, 1)
   const planets = s.bodies.filter((b) => b.kind === 'planet')
   const asteroids = s.bodies.filter((b) => b.kind === 'asteroid')

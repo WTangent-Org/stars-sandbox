@@ -80,9 +80,10 @@ export function radiusFor(kind: BodyKind, mass: number): number {
     case 'blackhole':
       return 2.2 + Math.cbrt(m) * 0.16
     // 行星：气态巨星被电子简并压支撑，半径几乎不随质量增长（木星≈土星），
-    // 岩石行星 R ∝ M^0.27——综合成缓增 + 上限：再大也不会比恒星还夸张
+    // 岩石行星 R ∝ M^0.27——综合成缓增 + 上限。上限必须 ≥ 质量段顶（24000）的
+    // 曲线值（≈15），否则大行星被封顶压平，看起来比小行星还小（体积失真）
     case 'planet':
-      return Math.min(0.75 + 1.55 * Math.pow(m, 0.22), 6.0)
+      return Math.min(0.75 + 1.55 * Math.pow(m, 0.22), 16)
     // 卫星/小行星：岩石天体 R ∝ M^0.27（恒定密度是 M^(1/3)，岩石略压实）
     case 'moon':
       return 0.4 + 0.75 * Math.pow(m, 0.27)
@@ -942,11 +943,13 @@ export class Simulation {
       return
     }
     const lostMass = Math.min(big.mass * 0.12, small.mass * 2)
-    big.mass -= lostMass
-    big.radius = radiusFor(big.kind, big.mass)
+    // 喷射封顶在大天体 30%（残骸至少保留七成），但 small 的质量必须有着落：
+    // 没喷出去的物质留在残骸里——否则碎裂就是质量蒸发（曾一撞丢 40% 总质量）
     const spray = Math.min(small.mass + lostMass, big.mass * 0.3)
     const pieces = COLLISION.shatterPieces
     const mEach = spray / pieces
+    big.mass = big.mass + small.mass - spray
+    big.radius = radiusFor(big.kind, big.mass)
     const ang0 = Math.atan2(small.y - big.y, small.x - big.x)
     const vRel = Math.hypot(small.vx - big.vx, small.vy - big.vy)
     for (let k = 0; k < pieces; k++) {

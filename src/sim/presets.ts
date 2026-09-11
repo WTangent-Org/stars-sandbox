@@ -261,24 +261,34 @@ export function loadPreset(sim: Simulation, id: PresetId): { zoom: number; units
   sim.config.G = G
   sim.config.softening = 3
 
+  /* —— 虚构预设的质量标定约定 ——
+   * 实体天体的质量必须落在 MASS_BANDS 对应段内（恒星≥24000、行星 10–24000、卫星 0.1–10），
+   * 与 Dock 质量滑杆同一把尺，并合定级/点燃/超新星线才有意义；不返回 REAL_UNITS（假 kg 换算
+   * 只会误导）。行星间相对质量取真实比例的平方根压缩（地球=300），保序又不至于跨度失真；
+   * 时间倍率按 √质量比 反向调整，保持旧版视觉节奏。tests/engine.test.ts 有段一致不变量兜底。
+   * 真实太阳系是唯一例外：物理质量 + kg 显示。 */
+
   switch (id) {
     case 'real': {
       const r = loadRealSolar(sim)
       return { ...r, units: REAL_UNITS }
     }
     case 'solar': {
-      const M = 1000
+      const M = 33000 // 恒星段（≥24000）：距超新星线 80000 还有 2.4 倍吞并空间，演化可玩
       sim.config.softening = 0.4
       sim.addBody({ kind: 'star', x: 0, y: 0, mass: M, name: '恒星 · 曦' })
+      // 行星质量只做「保序的示意比例」（水星<火星<金星≈地球<…<木星），远小于真实比例：
+      // 恒星半径 41.8 → 洛希极限 ≈104，内行星轨道必须全部在外；行星互相间的引力
+      // 也必须可忽略（木星若到恒星 16%，轨道互相摄动几年内就交叉相撞）
       const planets: Array<[string, number, number, string]> = [
-        ['水星', 78, 0.05, '#b8a08a'],
-        ['金星', 108, 0.08, '#e0b56a'],
-        ['地球', 142, 1.0, '#6fa8dc'],
-        ['火星', 178, 0.04, '#c97e5a'],
-        ['木星', 245, 1.6, '#d9b380'],
-        ['土星', 318, 0.7, '#d9c98f'],
-        ['天王星', 392, 0.22, '#8fc7c9'],
-        ['海王星', 462, 0.26, '#7f9fd9'],
+        ['水星', 112, 15, '#b8a08a'],
+        ['金星', 130, 25, '#e0b56a'],
+        ['地球', 148, 28, '#6fa8dc'],
+        ['火星', 165, 18, '#c97e5a'],
+        ['木星', 225, 90, '#d9b380'],
+        ['土星', 285, 60, '#d9c98f'],
+        ['天王星', 345, 40, '#8fc7c9'],
+        ['海王星', 405, 45, '#7f9fd9'],
       ]
       planets.forEach(([name, d, m, color], i) => {
         const ang = (i / planets.length) * Math.PI * 2 + 0.4
@@ -297,21 +307,21 @@ export function loadPreset(sim: Simulation, id: PresetId): { zoom: number; units
           glow: `${color}59`,
         })
         if (name === '地球' || name === '木星') {
-          // 卫星：宿主当前速度 + 绕宿主的圆轨道速度（沿轨道切向）。
-          // 距离取宿主希尔球内 ~1/4，永不逃逸；solid:false 避免紧贴时误触发碰撞。
-          const md = name === '地球' ? 2.0 : 4.5
-          const mm = name === '地球' ? 0.03 : 0.06
+          // 卫星圆轨道：偏移方向、速度切向必须同用卫星自己的角度——
+          // 偏移沿 +x 而切向按行星轨道角会造成纯径向初速，轨道变成俯冲椭圆，
+          // 卫星一头扎进宿主。距离在洛希极限外（地球≈6/木星≈9）、宿主半径外、
+          // 希尔球内；solid:false 避免贴脸误触发碰撞。
+          const md = name === '地球' ? 14 : 22
+          const mm = name === '地球' ? 3 : 4 // 卫星段 0.1–10
+          const mang = ang // 与宿主同角度起步，宿主速度直接叠加
           const mv = Math.sqrt((G * m) / md)
-          const tx = -Math.sin(ang)
-          const ty = Math.cos(ang)
           sim.addBody({
             kind: 'moon',
-            x: x + md,
-            y,
-            vx: p.vx + tx * mv,
-            vy: p.vy + ty * mv,
+            x: x + Math.cos(mang) * md,
+            y: y + Math.sin(mang) * md,
+            vx: p.vx - Math.sin(mang) * mv,
+            vy: p.vy + Math.cos(mang) * mv,
             mass: mm,
-            radius: name === '地球' ? 0.9 : 1.1,
             solid: false,
             name: name === '地球' ? '月球' : '木卫一',
             color: '#c9c4bd',
@@ -319,20 +329,20 @@ export function loadPreset(sim: Simulation, id: PresetId): { zoom: number; units
           })
         }
       })
-      sim.config.timeScale = 30
-      return { zoom: 1, units: REAL_UNITS }
+      sim.config.timeScale = 8
+      return { zoom: 1 }
     }
 
     case 'binary': {
-      const m = 420
+      const m = 30000
       const d = 300
       const v = Math.sqrt((G * m) / (2 * d))
       sim.addBody({ kind: 'star', x: -d / 2, y: 0, vy: v, mass: m, name: '恒星 · 天璇' })
       sim.addBody({ kind: 'star', x: d / 2, y: 0, vy: -v, mass: m, name: '恒星 · 天枢' })
       const ring = [
-        { d: 470, m: 0.4, color: '#b093d6' },
-        { d: 560, m: 0.2, color: '#7fb5d9' },
-        { d: 660, m: 0.5, color: '#d9c27f' },
+        { d: 470, m: 100, color: '#b093d6' },
+        { d: 560, m: 50, color: '#7fb5d9' },
+        { d: 660, m: 125, color: '#d9c27f' },
       ]
       ring.forEach((r, i) => {
         const ang = i * 2.1 + 0.7
@@ -348,14 +358,14 @@ export function loadPreset(sim: Simulation, id: PresetId): { zoom: number; units
           glow: `${r.color}59`,
         })
       })
-      sim.config.timeScale = 30
-      return { zoom: 0.85, units: REAL_UNITS }
+      sim.config.timeScale = 4
+      return { zoom: 0.85 }
     }
 
     case 'triple': {
       // 低角动量三角开局：三颗星反复塌缩纠缠、近距擦肩，
       // 经历约三十余次近距离接触后才逐渐分出双星+逃逸者——典型混沌
-      const m = 400
+      const m = 28000
       const R = 260
       const v = Math.sqrt((G * m) / R) * 0.25
       for (let i = 0; i < 3; i++) {
@@ -372,20 +382,21 @@ export function loadPreset(sim: Simulation, id: PresetId): { zoom: number; units
           name: ['恒星 · 玉衡', '恒星 · 开阳', '恒星 · 摇光'][i],
         })
       }
-      sim.config.timeScale = 24
-      return { zoom: 0.9, units: REAL_UNITS }
+      sim.config.timeScale = 3
+      return { zoom: 0.9 }
     }
 
     case 'galaxy': {
       const seed = { v: 42 }
-      sim.addBody({ kind: 'blackhole', x: 0, y: 0, mass: 20000, name: '超大质量黑洞 · 银心' })
+      const MBH = 600000 // 黑洞段（≥500000），示踪星总质量仅 ~1100，盘仍由中心主导
+      sim.addBody({ kind: 'blackhole', x: 0, y: 0, mass: MBH, name: '超大质量黑洞 · 银心' })
       // 示踪恒星：轻质量 + 非实体（真实星系是无碰撞系统，恒星不会互相撞上）
       for (let i = 0; i < 550; i++) {
         const t = rand(seed)
         const r = 110 + 570 * Math.pow(t, 0.75)
         const arm = i % 2
         const theta = r * 0.016 + arm * Math.PI + (rand(seed) - 0.5) * (0.35 + 70 / r)
-        const v = Math.sqrt((G * 20000) / r) * 1.02
+        const v = Math.sqrt((G * MBH) / r) * 1.02
         const mass = 0.4 + rand(seed) * rand(seed) * 4
         const [color, glow] = pickTracer(rand(seed))
         sim.addBody({
@@ -401,26 +412,26 @@ export function loadPreset(sim: Simulation, id: PresetId): { zoom: number; units
           solid: false,
         })
       }
-      sim.config.timeScale = 40
+      sim.config.timeScale = 7
       sim.config.softening = 25
       sim.config.trails = false
-      return { zoom: 0.55, units: REAL_UNITS }
+      return { zoom: 0.55 }
     }
 
     case 'collision': {
       const seed = { v: 7 }
-      // 非对心相遇：约 700 的碰撞参数，先掠飞、拉出潮汐尾，再回旋并合
-      makeTracerGalaxy(sim, { cx: -560, cy: -40, vx: 0.75, vy: 0.7, tilt: 0.5, coreMass: 5200, coreName: '星系核 · 阿贝尔-A', radius: 216, count: 130, seed, spiral: 0.045 })
-      makeTracerGalaxy(sim, { cx: 560, cy: 40, vx: -0.75, vy: -0.7, tilt: -0.9, coreMass: 5200, coreName: '星系核 · 阿贝尔-B', radius: 216, count: 130, seed, spiral: 0.045, squash: 0.55 })
-      sim.config.timeScale = 50
+      // 非对心相遇：先掠飞、拉出潮汐尾，再回旋并合；接近速度随 √核质量 同步放大
+      makeTracerGalaxy(sim, { cx: -560, cy: -40, vx: 8.1, vy: 7.5, tilt: 0.5, coreMass: 600000, coreName: '星系核 · 阿贝尔-A', radius: 216, count: 130, seed, spiral: 0.045 })
+      makeTracerGalaxy(sim, { cx: 560, cy: 40, vx: -8.1, vy: -7.5, tilt: -0.9, coreMass: 600000, coreName: '星系核 · 阿贝尔-B', radius: 216, count: 130, seed, spiral: 0.045, squash: 0.55 })
+      sim.config.timeScale = 5
       sim.config.softening = 20
       sim.config.trails = false
-      return { zoom: 0.42, units: REAL_UNITS }
+      return { zoom: 0.42 }
     }
 
     case 'empty':
     default:
       sim.config.timeScale = 30
-      return { zoom: 1, units: REAL_UNITS }
+      return { zoom: 1 }
   }
 }
