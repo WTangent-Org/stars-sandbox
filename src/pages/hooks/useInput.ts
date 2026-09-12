@@ -14,7 +14,6 @@ interface Params {
   rt: Rt
   rerender: () => void
   togglePause: () => void
-  /** 联机有主房里非房主的全局操作会被服务器拒绝；这里只管本地路径 */
   localSim: Rt['localSim']
   future: Rt['future']
   /** 状态单一来源在 Home：交互层只读写 */

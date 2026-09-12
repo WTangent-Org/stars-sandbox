@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { PresetId, ToolMode, UnitProfile } from '../sim/types'
 import Dock from '../sections/Dock'
 import GameMenu from '../sections/GameMenu'
-import MainMenu, { type AutosaveInfo } from '../sections/MainMenu'
+import Joystick from '../sections/Joystick'
+import MainMenu from '../sections/MainMenu'
 import SelectedCard from '../sections/SelectedCard'
 import ShipTelemetry from '../sections/ShipTelemetry'
 import StatsBar from '../sections/StatsBar'
@@ -39,9 +40,8 @@ export default function Home() {
   const sim = localSim
 
   // —— 存档库（含自动保存与提示语） ——
-  const [autosaveInfo, setAutosaveInfo] = useState<AutosaveInfo | null>(null)
   const { saves, autosaveMeta, saveMsg, showSaveMsg, saveAutosave, onSaveCurrent, onDeleteSave, onExportSave, onImportSave } =
-    useSaves({ rt, localSim, setAutosaveInfo })
+    useSaves({ rt, localSim })
 
   // —— 选中状态（单一来源在 Home；交互/菜单 hooks 都可能复位它） ——
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -50,19 +50,23 @@ export default function Home() {
   rt.modeRef.current = mode
 
   // —— 主菜单 / 游戏菜单流程 ——
-  const menu = useMenuFlow({ rt, rerender, saveAutosave, showSaveMsg, setUnits, setCurrentPreset, setSelectedId, setFollow, setAutosaveInfo })
-  const { screen, setScreen, menuOpen, setMenuOpen, startLocalWorld, exitToMenu, loadSaveFromMenu, loadAutosave } = menu
+  const menu = useMenuFlow({ rt, rerender, saveAutosave, showSaveMsg, setUnits, setCurrentPreset, setSelectedId, setFollow })
+  const { screen, setScreen, menuOpen, setMenuOpen, exitToMenu, loadWorld } = menu
 
   // —— 世界级操作 ——
   const [warp, setWarp] = useState(1)
   const worldOps = useWorldOps({ rt, rerender, onPrefs, setUnits, setCurrentPreset, setSelectedId, setFollow, setWarp, setMode, showSaveMsg })
   const { spawnCfg, onConfig, applyWarp, applyPreset, doRewind, onClear, onSpawnSettings, deployShip } = worldOps
 
-  /** 主菜单「继续游戏」：有自动存档就载入，否则进默认场景 */
-  const continueGame = useCallback(() => {
-    if (autosaveMeta || autosaveInfo) void loadAutosave()
-    else setScreen('game')
-  }, [autosaveMeta, autosaveInfo, loadAutosave, setScreen])
+  /** 主菜单「新的世界」：切预设进游戏（applyPreset 负责场景，这里只管流程） */
+  const startNewWorld = useCallback(
+    (id: PresetId) => {
+      applyPreset(id)
+      void saveAutosave()
+      setScreen('game')
+    },
+    [applyPreset, saveAutosave, setScreen],
+  )
 
   // —— 暂停切换（空格与底部按钮共用） ——
   const togglePause = useCallback(() => {
@@ -90,7 +94,7 @@ export default function Home() {
   rt.followRef.current = follow
 
   // —— 运行时（启动恢复 + rAF 主循环 + 遥测） ——
-  const { stats, selOrbit, shipTel } = useRuntime({ rt, rerender, setUnits, setCurrentPreset, setAutosaveInfo })
+  const { stats, selOrbit, shipTel } = useRuntime({ rt, rerender, setUnits, setCurrentPreset, setSelectedId, setFollow })
 
   // —— 性能档变化：落到本地模拟 ——
   useEffect(() => {
@@ -160,8 +164,8 @@ export default function Home() {
               saveMsg={saveMsg}
               onSaveCurrent={() => void onSaveCurrent()}
               autosaveMeta={autosaveMeta}
-              onLoadAutosave={() => void loadAutosave()}
-              onLoadSave={(id) => void loadSaveFromMenu(id)}
+              onLoadAutosave={() => void loadWorld('autosave')}
+              onLoadSave={(id) => void loadWorld(id)}
               onDeleteSave={(id) => void onDeleteSave(id)}
               onExportSave={(id) => void onExportSave(id)}
               onImportSave={() => void onImportSave()}
@@ -208,59 +212,9 @@ export default function Home() {
           </div>
 
           {/* 触屏虚拟摇杆 */}
-          {isTouch &&
-            sim.bodies.some((b) => b.kind === 'ship' && b.alive) &&
-            (prefs.joyMode === 'fixed' || joyAnchor) && (
-              <div
-                className="glass pointer-events-auto absolute z-20 h-28 w-28 touch-none rounded-full"
-                style={
-                  prefs.joyMode === 'float' && joyAnchor
-                    ? { left: joyAnchor.x - 56, top: joyAnchor.y - 56, opacity: 0.85 }
-                    : prefs.joySide === 'left'
-                      ? { bottom: 80, left: 16 }
-                      : { bottom: 80, right: 16 }
-                }
-                onPointerDown={(e) => {
-                  if (prefs.joyMode === 'float') return
-                  ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  const nx = ((e.clientX - rect.left) / rect.width - 0.5) * 2
-                  const ny = ((e.clientY - rect.top) / rect.height - 0.5) * 2
-                  const m = Math.min(1, Math.hypot(nx, ny))
-                  const a = Math.atan2(ny, nx)
-                  rt.joystickRef.current = { active: true, x: Math.cos(a) * m, y: Math.sin(a) * m }
-                  setJoystick({ ...rt.joystickRef.current })
-                }}
-                onPointerMove={(e) => {
-                  if (!rt.joystickRef.current.active || prefs.joyMode === 'float') return
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  const nx = ((e.clientX - rect.left) / rect.width - 0.5) * 2
-                  const ny = ((e.clientY - rect.top) / rect.height - 0.5) * 2
-                  const m = Math.min(1, Math.hypot(nx, ny))
-                  const a = Math.atan2(ny, nx)
-                  rt.joystickRef.current = { active: true, x: Math.cos(a) * m, y: Math.sin(a) * m }
-                  setJoystick({ ...rt.joystickRef.current })
-                }}
-                onPointerUp={() => {
-                  rt.joystickRef.current = { active: false, x: 0, y: 0 }
-                  setJoystick({ active: false, x: 0, y: 0 })
-                }}
-                onPointerCancel={() => {
-                  rt.joystickRef.current = { active: false, x: 0, y: 0 }
-                  setJoystick({ active: false, x: 0, y: 0 })
-                }}
-              >
-                <div className="absolute inset-0 rounded-full border border-[#22d3ee]/25" />
-                <div className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#22d3ee]/40" />
-                <div
-                  className="absolute h-9 w-9 rounded-full border border-[#22d3ee]/50 bg-[#22d3ee]/20 shadow-[0_0_14px_rgba(34,211,238,0.35)]"
-                  style={{ left: `calc(50% + ${joystick.x * 36}px)`, top: `calc(50% + ${joystick.y * 36}px)`, transform: 'translate(-50%,-50%)' }}
-                />
-                <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap font-mono text-[9px] tracking-[0.2em] text-[#5b6b8c]">
-                  推进器摇杆
-                </div>
-              </div>
-            )}
+          {isTouch && sim.bodies.some((b) => b.kind === 'ship' && b.alive) && (prefs.joyMode === 'fixed' || joyAnchor) && (
+            <Joystick rt={rt} prefs={prefs} joy={joystick} setJoy={setJoystick} anchor={joyAnchor} />
+          )}
 
           {/* 左下：飞船控制台遥测 */}
           {shipTel && (
@@ -298,14 +252,14 @@ export default function Home() {
         <GameMenu saveMsg={saveMsg} onResume={() => setMenuOpen(false)} onExitToMenu={() => void exitToMenu()} />
       )}
 
-      {/* 主菜单：世界（存档）是一级入口 */}
+      {/* 主菜单：存档列表是一级入口（自动存档为绿色首行） */}
       {screen === 'menu' && (
         <MainMenu
-          autosave={autosaveInfo}
-          onLoadAutosave={continueGame}
+          autosave={autosaveMeta}
+          onLoadAutosave={() => void loadWorld('autosave')}
           saves={saves}
-          onNewWorld={startLocalWorld}
-          onLoadSave={(id) => void loadSaveFromMenu(id)}
+          onNewWorld={startNewWorld}
+          onLoadSave={(id) => void loadWorld(id)}
           onDeleteSave={(id) => void onDeleteSave(id)}
           onExportSave={(id) => void onExportSave(id)}
           onImportSave={() => void onImportSave()}

@@ -54,7 +54,6 @@ export interface Rt {
   /** 启动恢复存档是一次异步过程：用户先动了预设/存档就放弃恢复 */
   userTouchedRef: RefObject<boolean>
   lastThrottleRef: RefObject<number>
-  lastThrustDirRef: RefObject<{ x: number; y: number }>
 }
 
 export function createRt(): Rt {
@@ -86,6 +85,5 @@ export function createRt(): Rt {
     currentPresetRef: { current: 'real' },
     userTouchedRef: { current: false },
     lastThrottleRef: { current: 0 },
-    lastThrustDirRef: { current: { x: 0, y: 0 } },
   }
 }

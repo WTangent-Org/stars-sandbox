@@ -1,6 +1,5 @@
 /**
  * 世界级操作：性能档/流速/时间倍率/预设切换/回退/清空/飞船部署。
- * 全局操作（暂停/回退/清空/切预设/流速）在联机有主房里是房主特权（MC 语义）。
  */
 import { useCallback, useState } from 'react'
 import { loadPreset } from '../../sim/presets'
@@ -29,7 +28,7 @@ export function useWorldOps(p: Params) {
   const onConfig = useCallback(
     (patch: Partial<SimConfig>) => {
       const { perfTier, timeScale, ...rest } = patch
-      // 性能档是渲染端行为：记入 prefs，由 effect 落到本地与镜像两个模拟
+      // 性能档是渲染端行为：记入 prefs，由 effect 落到本地模拟
       if (perfTier != null) p.onPrefs({ perfTier })
       // 轨迹开关是纯本地渲染行为
       if (rest.trails != null) {

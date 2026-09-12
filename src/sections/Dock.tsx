@@ -3,7 +3,8 @@ import type { PresetId, SimConfig, SpawnSettings, ToolMode } from '../sim/types'
 import { PRESETS } from '../sim/presets'
 import { MASS_BANDS, kindForMass } from '../sim/engine'
 import type { Prefs } from '../sim/prefs'
-import type { SaveMeta } from '../sim/saveStore'
+import type { AutosaveMeta, SaveMeta } from '../sim/saveStore'
+import SaveList from './SaveList'
 
 /** 质量段滑杆量程（与引擎 MASS_BANDS 对齐） */
 const MASS_MIN = 0.0001
@@ -36,7 +37,7 @@ interface Props {
   saves: SaveMeta[]
   saveMsg: string
   /** 自动存档摘要（列表首行） */
-  autosaveMeta?: { savedAt: number; bodies: number; preset?: string } | null
+  autosaveMeta?: AutosaveMeta | null
   onLoadAutosave: () => void
   onSaveCurrent: () => void
   onLoadSave: (id: string) => void
@@ -47,10 +48,10 @@ interface Props {
 
 const PERF_META: Array<{ v: SimConfig['perfTier']; label: string; desc: string }> = [
   { v: 'auto', label: '自动', desc: '按实测帧率自动升降（上限「高」）' },
-  { v: 'saver', label: '省电', desc: '线性插值不补算 · 最少子步 · 短轨迹' },
-  { v: 'low', label: '低', desc: '线性插值不补算 · 较少子步' },
-  { v: 'balanced', label: '均衡', desc: '客户端补算 · 标准子步与轨迹' },
-  { v: 'high', label: '高', desc: '客户端补算 · 更多子步 · 长轨迹' },
+  { v: 'saver', label: '省电', desc: '最少子步 · 短轨迹 · 预演最慢' },
+  { v: 'low', label: '低', desc: '较少子步 · 短轨迹' },
+  { v: 'balanced', label: '均衡', desc: '标准子步与轨迹（默认）' },
+  { v: 'high', label: '高', desc: '更多子步 · 长轨迹 · 预演更快' },
   { v: 'ultra', label: '极致', desc: '手动专属：最大子步与特效，重负载场景慎用' },
 ]
 
@@ -164,57 +165,20 @@ export default function Dock(p: Props) {
             >
               ⬇ 保存当前宇宙
             </button>
-            {p.autosaveMeta && (
-              <div className="rounded border border-[#34d399]/30 px-2 py-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-[11.5px] text-[#34d399]">自动存档</span>
-                  <span className="shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">
-                    {new Date(p.autosaveMeta.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-                <button
-                  onClick={p.onLoadAutosave}
-                  className="mt-1 w-full rounded border border-[#34d399]/40 px-1 py-0.5 text-[10px] text-[#34d399] hover:bg-[#34d399]/10"
-                >
-                  载入
-                </button>
-              </div>
-            )}
-            {p.saves.length === 0 ? (
-              <p className="text-[10px] text-[#5b6b8c]/60">每 30 秒自动保存一次，下次打开自动恢复。</p>
-            ) : (
+            {p.autosaveMeta || p.saves.length > 0 ? (
               <div className="space-y-1.5">
-                {p.saves.map((s) => (
-                  <div key={s.id} className="rounded border border-[#1a2540] px-2 py-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-[11.5px] text-[#dbe4f3]/90">{s.name}</span>
-                      <span className="shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">
-                        {new Date(s.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                    <div className="mt-1 flex gap-1">
-                      <button
-                        onClick={() => p.onLoadSave(s.id)}
-                        className="flex-1 rounded border border-[#22d3ee]/40 px-1 py-0.5 text-[10px] text-[#22d3ee] hover:bg-[#22d3ee]/10"
-                      >
-                        载入
-                      </button>
-                      <button
-                        onClick={() => p.onExportSave(s.id)}
-                        className="flex-1 rounded border border-[#1a2540] px-1 py-0.5 text-[10px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35"
-                      >
-                        导出
-                      </button>
-                      <button
-                        onClick={() => p.onDeleteSave(s.id)}
-                        className="flex-1 rounded border border-[#f87171]/25 px-1 py-0.5 text-[10px] text-[#f87171]/80 hover:border-[#f87171]/50"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                <SaveList
+                  autosave={p.autosaveMeta ?? null}
+                  onLoadAutosave={p.onLoadAutosave}
+                  saves={p.saves}
+                  loadLabel="载入"
+                  onLoadSave={p.onLoadSave}
+                  onDeleteSave={p.onDeleteSave}
+                  onExportSave={p.onExportSave}
+                />
               </div>
+            ) : (
+              <p className="text-[10px] text-[#5b6b8c]/60">每 30 秒自动保存一次，下次打开自动恢复。</p>
             )}
             {p.saveMsg && <p className="font-mono text-[10px] text-[#34d399]">{p.saveMsg}</p>}
           </>

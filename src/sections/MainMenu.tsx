@@ -1,18 +1,11 @@
 import { useState } from 'react'
 import { PRESETS } from '../sim/presets'
 import type { PresetId } from '../sim/types'
-import type { SaveMeta } from '../sim/saveStore'
-
-/** 自动存档摘要（主菜单「继续游戏」副标题） */
-export interface AutosaveInfo {
-  savedAt: number
-  bodies: number
-  preset?: string
-}
+import type { AutosaveMeta, SaveMeta } from '../sim/saveStore'
+import SaveList from './SaveList'
 
 interface Props {
-  /** 自动存档摘要（=「继续游戏」；null 时进入默认场景） */
-  autosave: AutosaveInfo | null
+  autosave: AutosaveMeta | null
   onLoadAutosave: () => void
   saves: SaveMeta[]
   onNewWorld: (preset: PresetId) => void
@@ -26,13 +19,10 @@ const btn =
   'w-full rounded-md border border-[#5b6b8c]/40 bg-[#0c1220]/80 px-4 py-3 text-left text-[14px] text-[#dbe4f3] transition-all hover:border-[#22d3ee]/60 hover:bg-[#22d3ee]/10'
 const smallBtn = 'rounded border border-[#1a2540] px-2 py-1 text-[10px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35'
 
-function fmt(t: number): string {
-  return new Date(t).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-}
-
-/** MC 风格主菜单：存档列表直接展开——继续游戏（自动存档）+ 手动存档 + 新的世界 */
+/** MC 风格主菜单：存档列表直接展开（自动存档为绿色首行）+ 新的世界 */
 export default function MainMenu(p: Props) {
   const [newWorldOpen, setNewWorldOpen] = useState(false)
+  const empty = !p.autosave && p.saves.length === 0
 
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#050810]/70 backdrop-blur-[2px]">
@@ -43,19 +33,9 @@ export default function MainMenu(p: Props) {
         </div>
 
         <div className="mt-5 space-y-2.5">
-          {/* 继续游戏 = 载入自动存档（就是列表里那个自动存档，不再单列重复） */}
-          <button onClick={p.onLoadAutosave} className={`${btn} border-[#22d3ee]/50`}>
-            <span className="text-[#22d3ee]">▶ 继续游戏</span>
-            <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">
-              {p.autosave
-                ? `上次的宇宙 · ${p.autosave.bodies} 天体 · ${fmt(p.autosave.savedAt)}`
-                : '开始新的旅程（真实太阳系）'}
-            </span>
-          </button>
-
-          <button onClick={() => setNewWorldOpen(!newWorldOpen)} className={btn}>
-            ✦ 新的世界
-            <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">从预设开始创造（真实太阳系 / 空白宇宙 / 星系…）</span>
+          <button onClick={() => setNewWorldOpen(!newWorldOpen)} className={`${btn} border-[#22d3ee]/50`}>
+            <span className="text-[#22d3ee]">✦ 新的世界</span>
+            <span className="mt-0.5 block text-[10px] text-[#5b6b8c]">从预设开始（真实太阳系 / 空白宇宙 / 星系…）</span>
           </button>
           {newWorldOpen && (
             <div className="grid grid-cols-2 gap-1.5 rounded-md border border-[#1a2540] bg-[#0c1220]/60 p-2">
@@ -72,7 +52,7 @@ export default function MainMenu(p: Props) {
             </div>
           )}
 
-          {/* 手动存档列表（直接展开） */}
+          {/* 存档列表：自动存档（上次离开时的宇宙）+ 手动存档，直接展开 */}
           <div className="rounded-md border border-[#5b6b8c]/40 bg-[#0c1220]/80 px-3 py-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[13px] text-[#dbe4f3]">📁 存档</span>
@@ -80,43 +60,21 @@ export default function MainMenu(p: Props) {
                 导入 .json
               </button>
             </div>
-            {p.saves.length === 0 ? (
+            {empty ? (
               <p className="mt-2 text-[10px] leading-relaxed text-[#5b6b8c]/70">
-                暂无手动存档。游戏内每 30 秒自动保存当前进度；「⬇」按钮可另存为固定存档。
+                还没有世界。从「新的世界」开始；游戏内每 30 秒自动保存进度。
               </p>
             ) : (
               <div className="mg-scroll mt-2 max-h-[34vh] space-y-1.5 overflow-y-auto pr-1">
-                {p.saves.map((s) => (
-                  <div key={s.id} className="rounded border border-[#1a2540] px-2 py-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-[12px] text-[#dbe4f3]/90">{s.name}</span>
-                      <span className="shrink-0 font-mono text-[9px] text-[#5b6b8c]/60">{fmt(s.savedAt)}</span>
-                    </div>
-                    <div className="mt-0.5 font-mono text-[9px] text-[#5b6b8c]/50">
-                      {s.bodies} 天体{s.preset ? ` · ${PRESETS.find((pr) => pr.id === s.preset)?.label ?? s.preset}` : ''}
-                    </div>
-                    <div className="mt-1 flex gap-1">
-                      <button
-                        onClick={() => p.onLoadSave(s.id)}
-                        className="flex-1 rounded border border-[#22d3ee]/40 px-1 py-0.5 text-[10px] text-[#22d3ee] hover:bg-[#22d3ee]/10"
-                      >
-                        进入
-                      </button>
-                      <button
-                        onClick={() => p.onExportSave(s.id)}
-                        className="flex-1 rounded border border-[#1a2540] px-1 py-0.5 text-[10px] text-[#dbe4f3]/70 hover:border-[#22d3ee]/35"
-                      >
-                        导出
-                      </button>
-                      <button
-                        onClick={() => p.onDeleteSave(s.id)}
-                        className="flex-1 rounded border border-[#f87171]/25 px-1 py-0.5 text-[10px] text-[#f87171]/80 hover:border-[#f87171]/50"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                <SaveList
+                  autosave={p.autosave}
+                  onLoadAutosave={p.onLoadAutosave}
+                  saves={p.saves}
+                  loadLabel="进入"
+                  onLoadSave={p.onLoadSave}
+                  onDeleteSave={p.onDeleteSave}
+                  onExportSave={p.onExportSave}
+                />
               </div>
             )}
           </div>

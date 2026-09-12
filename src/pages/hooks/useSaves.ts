@@ -4,21 +4,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Simulation } from '../../sim/engine'
 import { exportSaveFile, importSaveFile } from '../../sim/saveFile'
-import { deleteSave, getAutosave, getSave, listSaves, putAutosave, putSave, type SaveMeta } from '../../sim/saveStore'
-import type { AutosaveInfo } from '../../sections/MainMenu'
+import {
+  deleteSave,
+  getAutosave,
+  getSave,
+  listSaves,
+  putAutosave,
+  putSave,
+  type AutosaveMeta,
+  type SaveMeta,
+} from '../../sim/saveStore'
 import type { Rt } from '../rt'
-
-/** 自动存档摘要（列表首行展示用） */
-export interface AutosaveMeta {
-  savedAt: number
-  bodies: number
-  preset?: string
-}
 
 interface Params {
   rt: Rt
   localSim: Simulation
-  setAutosaveInfo: (info: AutosaveInfo | null) => void
 }
 
 export function useSaves(p: Params) {
@@ -132,10 +132,8 @@ export function useSaves(p: Params) {
   return {
     saves,
     autosaveMeta,
-    refreshAutosave,
     saveMsg,
     showSaveMsg,
-    refreshSaves,
     saveAutosave,
     onSaveCurrent,
     onDeleteSave,

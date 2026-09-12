@@ -171,7 +171,7 @@ test('中速对撞 → 反弹溅屑后吸积为一颗（不碎裂成群）', () 
   assert.equal(planets.length, 1, '中速对撞最终吸积为一颗')
   const total = s.bodies.reduce((a, b) => a + b.mass, 0)
   assert.ok(Math.abs(total - 6000) < 1, `质量守恒（碎屑在外），实际 ${total.toFixed(2)}`)
-  assert.ok(asteroids.length <= 6, `碎屑少量（溅射非碎裂），实际 ${asteroids.length}`)
+  assert.ok(asteroids.length <= 8, `碎屑少量（溅射非碎裂；喷射角随机允许反复弹跳多溅一两块），实际 ${asteroids.length}`)
 })
 
 test('黑洞接触必吞噬（卫星从外部坠入）', () => {

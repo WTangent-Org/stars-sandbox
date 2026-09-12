@@ -3,15 +3,14 @@
  * + 400ms 遥测（HUD 统计 / 轨道根数 / 飞船控制台）。
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Simulation } from '../../sim/engine'
-import { loadPreset, PRESETS } from '../../sim/presets'
+import { loadPreset } from '../../sim/presets'
 import { getAutosave } from '../../sim/saveStore'
 import type { Body, PresetId } from '../../sim/types'
 import { resolveOrbitHost, escapeSpeed } from '../../sim/orbit'
 import { makeStarfield, draw } from '../../sim/renderer'
 import type { SimStats, UnitProfile } from '../../sim/types'
-import type { AutosaveInfo } from '../../sections/MainMenu'
 import type { Rt } from '../rt'
+import { applyWorld } from '../applyWorld'
 
 /** 选中天体的轨道根数（相对当前引力主导者，任意天体都有，不只飞船） */
 export interface SelOrbitInfo {
@@ -44,23 +43,24 @@ interface Params {
   rerender: () => void
   setUnits: (u: UnitProfile | undefined) => void
   setCurrentPreset: (id: PresetId) => void
-  setAutosaveInfo: (info: AutosaveInfo | null) => void
+  setSelectedId: (id: number | null) => void
+  setFollow: (v: boolean) => void
 }
 
 export function useRuntime(p: Params) {
   const { rt } = p
-  const { rerender, setUnits, setCurrentPreset, setAutosaveInfo } = p
+  const { rerender, setUnits, setCurrentPreset } = p
   const { localSim, future } = rt
   const [stats, setStats] = useState<SimStats>({ bodies: 0, stars: 0, fps: 60, simTime: 0, merges: 0, totalMass: 0 })
   const [selOrbit, setSelOrbit] = useState<SelOrbitInfo | null>(null)
   const [shipTel, setShipTel] = useState<ShipTelInfo | null>(null)
 
-  /** 找「我的飞船」：联机时按 owners 归属找自己的船（找不到退化任意一艘）；离线取第一艘 */
+  /** 找「我的飞船」：离线取第一艘 */
   const findMyShip = useCallback((): Body | undefined => {
     return rt.localSim.bodies.find((b) => b.kind === 'ship' && b.alive)
   }, [rt])
 
-  // —— 挂载：以存档为基础启动（恢复上次的宇宙），默认离线单机；联机需显式连接 ——
+  // —— 挂载：以存档为基础启动（恢复上次的宇宙） ——
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -69,29 +69,8 @@ export function useRuntime(p: Params) {
         const rec = await getAutosave()
         // 用户在恢复完成前已切预设/载入存档时，放弃恢复（避免旧存档覆盖新操作）
         if (rec && !cancelled && !rt.userTouchedRef.current) {
-          localSim.restoreWorld(rec.state)
           restored = true
-          setAutosaveInfo({ savedAt: rec.savedAt, bodies: rec.state.bodies.length, preset: rec.state.preset })
-          const pid = rec.state.preset
-          if (pid && PRESETS.some((pr) => pr.id === pid)) {
-            // 合法预设：用探针恢复单位换算，相机用存档里的。
-            // 基准流速用预设默认值归一化——存档里的 timeScale 是「基准×当时倍率」
-            // 的合成值，直接当基准会让 1× 永远跑在旧倍率上
-            const probe = new Simulation()
-            const { zoom, units: u } = loadPreset(probe, pid as PresetId)
-            rt.camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom }
-            rt.unitsRef.current = u
-            setUnits(u)
-            rt.baseTimeScaleRef.current = probe.config.timeScale
-            localSim.config.timeScale = probe.config.timeScale
-            setCurrentPreset(pid as PresetId)
-          } else {
-            rt.camRef.current = rec.state.camera ?? { x: 0, y: 0, zoom: 1 }
-            rt.unitsRef.current = undefined
-            setUnits(undefined)
-            rt.baseTimeScaleRef.current = rec.state.config.timeScale
-            setCurrentPreset('empty')
-          }
+          applyWorld(rt, rec.state, p)
         }
       } catch {
         /* IndexedDB 不可用（隐私模式等）：走默认预设 */
@@ -154,7 +133,6 @@ export function useRuntime(p: Params) {
       let ty = 0
       let m = 0
       let newThrust = 0
-      let thrustChanged = false
       if (ship && !ship.held) {
         const keys = rt.keysRef.current
         const joy = rt.joystickRef.current
@@ -208,8 +186,7 @@ export function useRuntime(p: Params) {
         if (keys.has('ShiftLeft') || keys.has('ShiftRight')) throttle = Math.min(1, throttle * 3)
         m = Math.hypot(tx, ty)
         newThrust = m > 0 ? throttle : 0
-        thrustChanged = newThrust !== rt.lastThrottleRef.current
-        if (thrustChanged) future.invalidate() // 推力变化 → 预演缓冲分叉
+        if (newThrust !== rt.lastThrottleRef.current) future.invalidate() // 推力变化 → 预演缓冲分叉
         rt.lastThrottleRef.current = newThrust
         ship.thrust = newThrust
         if (m > 0) {
@@ -323,7 +300,7 @@ export function useRuntime(p: Params) {
       clearInterval(statTimer)
       window.removeEventListener('resize', resize)
     }
-  }, [future, findMyShip, rt, rerender, setUnits, setCurrentPreset, setAutosaveInfo])
+  }, [future, findMyShip, rt, rerender, setUnits, setCurrentPreset])
 
   return { stats, selOrbit, shipTel }
 }

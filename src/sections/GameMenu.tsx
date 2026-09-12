@@ -22,7 +22,7 @@ export default function GameMenu(p: Props) {
           </button>
         </div>
         <p className="mt-3 text-center font-mono text-[10px] text-[#5b6b8c]/70">
-          保存 / 新建房间（开放局域网）在左侧「世界」页 · 每分钟自动保存
+          保存 / 载入 / 新世界在左侧「世界」页 · 每 30 秒自动保存
         </p>
         {p.saveMsg && <p className="mt-2 text-center font-mono text-[10.5px] text-[#34d399]">{p.saveMsg}</p>}
       </div>

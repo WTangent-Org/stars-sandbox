@@ -9,6 +9,13 @@ export interface SaveMeta {
   preset?: string
 }
 
+/** 自动存档摘要（列表首行展示用） */
+export interface AutosaveMeta {
+  savedAt: number
+  bodies: number
+  preset?: string
+}
+
 interface SaveRecord extends SaveMeta {
   state: WorldState
 }
